@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.54 — 2026-09-25
+
+- 流里出现 `message_stop` 就结束这一跳，即使没有可见正文。没有 `message_stop` 的空跳先在同号重试，然后暂停该号约 60 秒并换下一个号。
+- 发出去之前，只剩无签名 thinking 的空 assistant 轮会被删掉，相邻用户消息合并。
+- OpenAI Responses 的 `tool_choice.name` 放到顶层。
+
+已部署机升级：只覆盖控制面并重启 Node 一次。二进制未变，不必 `wrap-cli/sync`。不要 `docker rm` 槽。
+
 ## 1.3.53 — 2026-09-25
 
 - 没有可见输出的跳不再回收内核。以前这会被当成槽泄漏，`SIGKILL` 监督进程里的 CLI 并重启内核，同槽重试打在刚被拉起的进程上。
