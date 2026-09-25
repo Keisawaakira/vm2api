@@ -107,6 +107,16 @@ test('thinking-only assistant is an envelope but not a complete message', () => 
   assert.equal(finalized.terminalState, 'incomplete')
 })
 
+test('message_stop completes a hop that has no visible text', () => {
+  const stopped = {
+    ok: false,
+    sawMessageStop: true,
+    body: { type: 'message', role: 'assistant', content: [], stop_reason: null },
+  }
+  assert.equal(isCompleteAssistantMessage(stopped), true)
+  assert.equal(finalizeAssembledAssistantHop(stopped).ok, true)
+})
+
 test('server_tool_use plus stop_reason is a complete assistant hop', () => {
   const complete = {
     ok: false,

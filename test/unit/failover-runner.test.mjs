@@ -509,17 +509,15 @@ test('thinking-only hop retries same account and returns the later text', async 
   assert.equal(result.body.stop_reason, 'end_turn')
 })
 
-test('repeated incomplete hop retries once then returns 502 without switching', async () => {
+test('repeated incomplete hop parks the account then switches', async () => {
   const scheduler = new Scheduler([candidate(1), candidate(2)])
   const parked = []
-  const noted = []
   const runner = new FailoverRunner({
     scheduler,
     config: { same_account_retry_delay_ms: 0 },
     rateLimitService: {
       handleUpstreamError: () => null,
       tempUnschedule: (item) => parked.push(item),
-      noteDistinctEmptyHop: (item) => noted.push(item),
     },
   })
   const seen = []
@@ -540,12 +538,10 @@ test('repeated incomplete hop retries once then returns 502 without switching', 
       }
     },
   })
-  assert.equal(result.status, 502)
-  assert.equal(result.body.error.code, 'incomplete_response')
-  assert.equal(result.vmId, 'vm-01')
-  assert.deepEqual(seen, ['vm-01', 'vm-01'])
-  assert.deepEqual(parked, [])
-  assert.deepEqual(noted, [{ accountId: 'account-1', vmId: 'vm-01', requestId: 'req-incomplete-affinity' }])
+  assert.equal(result.ok, true)
+  assert.equal(result.vmId, 'vm-02')
+  assert.deepEqual(seen, ['vm-01', 'vm-01', 'vm-02'])
+  assert.deepEqual(parked, [{ accountId: 'account-1', vmId: 'vm-01' }])
 })
 
 test('pinned incomplete hop still stops on the pinned VM', async () => {
@@ -945,7 +941,7 @@ test('pool exhaustion details include the scheduler snapshot', async () => {
   assert.deepEqual(result.body.error.details.wait_reasons, ['account_cooldown'])
 })
 
-test('thinking-only hop returns 502 without emptying the pool', async () => {
+test('thinking-only hop without message_stop switches after the same-account retry', async () => {
   const scheduler = new Scheduler([candidate(1), candidate(2)])
   const seen = []
   const runner = new FailoverRunner({
@@ -972,14 +968,12 @@ test('thinking-only hop returns 502 without emptying the pool', async () => {
       }
     },
   })
-  assert.notEqual(result.status, 200)
-  assert.equal(result.status, 502)
-  assert.equal(result.body.error.code, 'incomplete_response')
-  assert.equal(result.vmId, 'vm-01')
-  assert.deepEqual(seen, ['vm-01', 'vm-01'])
+  assert.equal(result.status, 503)
+  assert.equal(result.body.error.code, 'account_pool_exhausted')
+  assert.deepEqual(seen, ['vm-01', 'vm-01', 'vm-02', 'vm-02'])
 })
 
-test('incomplete hops stay on the first account and return 502', async () => {
+test('incomplete hops without message_stop try the next account', async () => {
   const scheduler = new Scheduler([candidate(1), candidate(2)])
   const seen = []
   const runner = new FailoverRunner({
@@ -1006,10 +1000,9 @@ test('incomplete hops stay on the first account and return 502', async () => {
       }
     },
   })
-  assert.equal(result.status, 502)
-  assert.equal(result.body.error.code, 'incomplete_response')
-  assert.equal(result.vmId, 'vm-01')
-  assert.deepEqual(seen, ['vm-01', 'vm-01'])
+  assert.equal(result.status, 503)
+  assert.equal(result.body.error.code, 'account_pool_exhausted')
+  assert.deepEqual(seen, ['vm-01', 'vm-01', 'vm-02', 'vm-02'])
 })
 
 test('same sticky session requests execute serially', async () => {
