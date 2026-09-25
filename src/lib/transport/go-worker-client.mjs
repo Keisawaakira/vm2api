@@ -19,7 +19,7 @@ import {
 import { isApiKeyMode } from '../oauth/credential-mode.mjs'
 import { runSlotOauth } from './slot-oauth.mjs'
 import { applyClaudeSSELineToMessage, createClaudeMessageAssembler } from '../protocol/convert.mjs'
-import { clientCancelledResult, isCompleteAssistantMessage, isWrapConnectionError } from '../core/errors.mjs'
+import { clientCancelledResult, isClientCancelledResult, isCompleteAssistantMessage, isWrapConnectionError } from '../core/errors.mjs'
 import { extraHeadersFromLimitError, isPlanLimitMessage } from '../pool/quota-window.mjs'
 
 const MAX_BODY = 64 * 1024 * 1024
@@ -299,12 +299,24 @@ function unfinishedEmptyHop(result) {
 }
 
 export function restoreUncommittedHop(result = {}, { now = Date.now() } = {}) {
-  if (!result || result.committed || result.ok) return result
+  if (!result || result.committed || result.ok || isClientCancelledResult(result)) return result
   if (Number(result.status) < 200 || Number(result.status) >= 300) return result
   const body = result.body
   if (body?.type === 'error' || body?.error) {
     const status = semanticStatusForStreamError(body)
     const message = String(body?.error?.message || body?.message || '')
+    const code = String(body?.error?.code || '')
+    if (code && code !== 'empty_response') {
+      const headers =
+        status === 429 ? extraHeadersFromLimitError(message, result.headers || {}, now) : result.headers
+      return {
+        ...result,
+        status,
+        headers,
+        terminalState: status === 502 ? result.terminalState || 'incomplete' : 'rejected',
+        streamError: status !== 502,
+      }
+    }
     if (status === 502 && !/overload|usage policy/i.test(message)) {
       if (isWrapConnectionError(message)) return { ...result, ok: false, terminalState: 'incomplete' }
       return unfinishedEmptyHop(result)
@@ -666,7 +678,7 @@ export async function streamGoWorker({
       idleTimer.unref?.()
     }
     try {
-      for await (const chunk of response) {
+      readLoop: for await (const chunk of response) {
         sawChunk = true
         lastChunkAt = Date.now()
         buffer += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk)
@@ -696,6 +708,7 @@ export async function streamGoWorker({
             if (isDownstreamCommitEvent(event)) await flushCommit()
           }
           await emitLine(line)
+          if (sawMessageStop) break readLoop
         }
       }
       if (buffer) {

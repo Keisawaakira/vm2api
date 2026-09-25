@@ -11,8 +11,24 @@ import {
   workerHealth,
   usageFromSseEvent,
   isDownstreamCommitEvent,
+  restoreUncommittedHop,
 } from '../../src/lib/transport/go-worker-client.mjs'
 import { extractOpenaiUsage } from '../../src/lib/protocol/openai-usage.mjs'
+
+test('restoreUncommittedHop keeps a structured upstream code', () => {
+  const restored = restoreUncommittedHop({
+    ok: false,
+    status: 200,
+    committed: false,
+    terminalState: 'incomplete',
+    body: {
+      type: 'error',
+      error: { type: 'api_error', code: 'upstream_stream_incomplete', message: 'job idle timeout' },
+    },
+  })
+  assert.equal(restored.body.error.code, 'upstream_stream_incomplete')
+  assert.notEqual(restored.body.error.code, 'empty_response')
+})
 
 test('setup-token worker envelope is inference-only', () => {
   const out = finalizeWorkerPayload({

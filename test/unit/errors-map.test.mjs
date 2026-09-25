@@ -159,6 +159,35 @@ test('ok text without stop_reason is finalized as incomplete', () => {
   assert.equal(finalized.terminalState, 'incomplete')
 })
 
+test('finalize does not clear a committed partial hop', () => {
+  const finalized = finalizeAssembledAssistantHop({
+    ok: true,
+    committed: true,
+    terminalState: 'verified',
+    body: {
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'text', text: 'partial' }],
+    },
+  })
+  assert.equal(finalized.ok, false)
+  assert.equal(finalized.committed, true)
+  assert.equal(finalized.terminalState, 'incomplete')
+})
+
+test('client cancel is not rewritten when message_stop is missing', () => {
+  const finalized = finalizeAssembledAssistantHop({
+    ok: false,
+    clientCancelled: true,
+    terminalState: 'cancelled',
+    committed: true,
+    body: { type: 'message', role: 'assistant', content: [{ type: 'text', text: 'partial' }] },
+  })
+  assert.equal(finalized.clientCancelled, true)
+  assert.equal(finalized.terminalState, 'cancelled')
+  assert.equal(finalized.committed, true)
+})
+
 test('ok non-assistant envelope is finalized as incomplete', () => {
   const finalized = finalizeAssembledAssistantHop({
     ok: true,

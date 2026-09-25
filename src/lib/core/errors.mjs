@@ -242,7 +242,12 @@ export function finalizeAssembledAssistantHop(result = {}) {
   if (isClientCancelledResult(result)) return result
   if (isCompleteAssistantMessage(result)) return result?.ok ? result : { ...result, ok: true }
   if (isIncompleteAssistantMessage(result) || result?.ok) {
-    return { ...result, ok: false, committed: false, terminalState: 'incomplete' }
+    return {
+      ...result,
+      ok: false,
+      committed: !!result?.committed,
+      terminalState: 'incomplete',
+    }
   }
   return result
 }
@@ -264,7 +269,7 @@ export function incompleteAssistantClientError(result = {}) {
   return {
     ...result,
     ok: false,
-    committed: false,
+    committed: !!result?.committed,
     terminalState: 'incomplete',
     status: 502,
     body: {
