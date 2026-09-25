@@ -1040,8 +1040,12 @@ export class PoolScheduler {
     const key = String(sessionKey || '')
     const preferred = key ? book.preferred.get(key) : null
     const busy = new Set(book.inflight.values())
+    const ownsBusySeat =
+      Number.isInteger(preferred) &&
+      busy.has(preferred) &&
+      [...book.inflight.keys()].some((hold) => String(hold).startsWith(`live:${key}:`))
     let index
-    if (Number.isInteger(preferred)) {
+    if (Number.isInteger(preferred) && (!busy.has(preferred) || ownsBusySeat)) {
       index = preferred
     } else {
       index = 0
