@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.55 — 2026-09-26
+
+- 取消请求按客户端生命周期结束处理：不计错误、不解绑长期 session；Node 等待读完 `kin_job_done` / trailers，避免正常 `message_stop` 被误判为客户端断开。
+- Claude family 透传 parent/root/device；主 session 与 Sonnet/Haiku 子 session 固定同一 VM，各占独立 session 槽位。family 满载不跨 VM，generation 恢复整族迁移。
+- 账号池空跳、family 调度和取消隔离补齐测试。升级会同步控制面与二进制；不要 `docker rm` 槽。
+
+发布资产包含更新后的 `kin-kernel`、`kin-codex-kernel`、`kin-cookie-auth`、`kin-egress`、`kin-worker`、`cli-node`、`cc-node` 和 crag kernel。
+
 ## 1.3.54 — 2026-09-25
 
 - 流里出现 `message_stop` 就结束这一跳，即使没有可见正文。没有 `message_stop` 的空跳先在同号重试，然后暂停该号约 60 秒并换下一个号。
