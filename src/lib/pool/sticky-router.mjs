@@ -160,6 +160,12 @@ export function explicitParentSessionId(body = {}, headers = {}) {
   ).trim()
 }
 
+export function childDeclaredWithoutParent(body = {}, headers = {}) {
+  const meta = body?.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata) ? body.metadata : {}
+  const declared = meta.kin_child === true || String(meta.kin_child || headers?.['x-kin-child'] || '') === '1'
+  return declared && !explicitParentSessionId(body, headers)
+}
+
 export class StickyRouter {
   constructor({ dataDir, db, config }) {
     this.db = resolveStoreDb({ db, dataDir })

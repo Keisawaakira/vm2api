@@ -78,7 +78,7 @@ import {
   resolveOutboundSessionId,
   sessionContextDiscriminator,
 } from '../identity/identity-rewrite.mjs'
-import { clientIp, explicitParentSessionId } from '../pool/sticky-router.mjs'
+import { clientIp, childDeclaredWithoutParent, explicitParentSessionId } from '../pool/sticky-router.mjs'
 import {
   applyCrsUnofficialPersona,
   detectProxiedOfficialCcFromRoutingFile,
@@ -607,6 +607,21 @@ export function createHandleProtocol(deps) {
     }
     // device_id points a Haiku companion at this turn's session. API key does not.
     const stickyDeviceId = String(parseUserId(inbound?.metadata?.user_id)?.device_id || '').trim()
+    if (childDeclaredWithoutParent(inbound, req.headers)) {
+      stats.errors++
+      logBag.error_code = 'family_relation_required'
+      logBag.error_message = 'Child request is missing parent or root session'
+      return json(
+        res,
+        400,
+        makeError({
+          type: ErrorType.INVALID_REQUEST,
+          code: 'family_relation_required',
+          message: 'Child request is missing parent or root session',
+          status: 400,
+        }).body,
+      )
+    }
     const stickyKey = stickyRouter?.extractPoolKey?.(req, inbound, { platform: 'anthropic' }) || null
     const stickyKeys = stickyRouter?.collectPoolKeys?.(req, inbound, { platform: 'anthropic' }) || []
     const parentSession = explicitParentSessionId(inbound, req.headers)
