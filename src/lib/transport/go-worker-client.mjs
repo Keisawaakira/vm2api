@@ -639,6 +639,7 @@ export async function streamGoWorker({
         sseRateHeaders = { ...sseRateHeaders, ...event.headers }
       }
       if (event.type === 'error') lastError = event
+      if (event.type === 'message_stop') sawMessageStop = true
       const evUsage = usageFromSseEvent(event)
       if (evUsage) sseUsage = mergeUsage(sseUsage, evUsage)
       if (event.message?.model) sseModel = event.message.model
@@ -650,6 +651,7 @@ export async function streamGoWorker({
     const idleMs = Math.max(0, Number(idleTimeoutMs) || 0)
     let lastChunkAt = Date.now()
     let sawChunk = false
+    let sawMessageStop = false
     let idleTimer = null
     if (firstByteMs > 0 || idleMs > 0) {
       idleTimer = setInterval(() => {
@@ -708,7 +710,9 @@ export async function streamGoWorker({
       const meta = streamMetaFromHeaders({ ...headers, ...trailers })
       const assembled = assembler.message
       const stopReason = meta.stopReason || sseStop || assembled?.stop_reason || null
-      const complete = !lastError && isCompleteAssistantMessage({ body: assembled, stopReason })
+      const complete =
+        !lastError &&
+        isCompleteAssistantMessage({ body: assembled, stopReason, sawMessageStop })
       if (!committed && complete) await flushCommit()
       const terminalState = complete ? 'verified' : 'incomplete'
       const rateHeaders = mergeRateLimitHeaders({ ...sseRateHeaders, ...headers, ...trailers })
@@ -724,6 +728,7 @@ export async function streamGoWorker({
         usage: mergeUsage(mergeUsage(assembled?.usage || null, sseUsage), meta.usage),
         model: meta.model || sseModel || assembled?.model || null,
         stopReason,
+        sawMessageStop,
         ttftMs,
         committed,
         terminalState,

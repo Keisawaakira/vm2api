@@ -677,28 +677,27 @@ export class FailoverRunner {
           }
           continue
         }
-        // Same-account budget spent on an empty / thinking-only hop: return 502.
-        // One request must not park or rotate the pool. A later request that
-        // empty-hops the same account is what noteDistinctEmptyHop may park.
+        // Same-account budget spent without message_stop: park this account
+        // for the empty-response window and switch (sub2api tempUnscheduleEmptyResponse).
+        // A pinned diagnostic stays on that slot and returns the 502.
         if (isRetryableEmptyHop(policy)) {
-          if (!pinVmId) {
-            try {
-              this.rateLimitService?.noteDistinctEmptyHop?.({
-                accountId: selected.accountId,
-                vmId: selected.vmId,
-                requestId,
-              })
-            } catch {}
+          if (pinVmId) {
+            return {
+              ...incompleteAssistantClientError(result),
+              via: result?.via || 'pool-failover',
+              accountId: selected.accountId,
+              vmId: selected.vmId,
+              attemptCount: attemptNo,
+              finalState: 'incomplete',
+              policy,
+            }
           }
-          return {
-            ...incompleteAssistantClientError(result),
-            via: result?.via || 'pool-failover',
-            accountId: selected.accountId,
-            vmId: selected.vmId,
-            attemptCount: attemptNo,
-            finalState: 'incomplete',
-            policy,
-          }
+          try {
+            this.rateLimitService?.tempUnschedule?.({
+              accountId: selected.accountId,
+              vmId: selected.vmId,
+            })
+          } catch {}
         }
 
         const switchesExhausted = budget.noteSwitch(selected.accountId, selected.vmId, {

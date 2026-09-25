@@ -197,10 +197,15 @@ export function assistantStopReason(result = {}) {
   return String(result?.stopReason || result?.body?.stop_reason || '').trim()
 }
 
-/** Envelope plus stop_reason plus visible text/tool/refusal. Thinking-only is not complete. */
+/**
+ * sub2api: message_stop ends the stream even when the body has no visible text.
+ * Without that terminal event, stop_reason plus visible text/tool/refusal is required.
+ * Thinking-only and a bare stop_reason are not complete.
+ */
 export function isCompleteAssistantMessage(result = {}) {
   const body = result?.body && typeof result.body === 'object' ? result.body : result
   if (!isAssistantMessageBody(body)) return false
+  if (result?.sawMessageStop) return true
   if (!assistantStopReason({ body, stopReason: result?.stopReason })) return false
   return assistantVisibleOutput(body)
 }
