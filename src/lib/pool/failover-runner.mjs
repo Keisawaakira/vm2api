@@ -355,11 +355,15 @@ export class FailoverRunner {
     }
   }
 
-  forgetCredential(selected, policy) {
-    this.stickyRouter?.unbindByAccount?.({
-      accountId: selected?.accountId,
-      vmId: selected?.vmId,
-    })
+  forgetCredential(selected, policy, { familyKey = null, sessionKeys = [] } = {}) {
+    if (familyKey) {
+      for (const key of sessionKeys) this.stickyRouter?.unbind?.(key)
+    } else {
+      this.stickyRouter?.unbindByAccount?.({
+        accountId: selected?.accountId,
+        vmId: selected?.vmId,
+      })
+    }
     if (typeof this.onCredentialFailure === 'function') {
       try {
         this.onCredentialFailure({ selected, policy })
@@ -678,7 +682,17 @@ export class FailoverRunner {
         }
         applyCooldown(this.scheduler, selected, policy, model, this.stickyRouter, { diagnosticPin: !!pinVmId })
         if (!pinVmId && isCredentialDeath(policy)) {
-          this.forgetCredential(selected, policy)
+          this.forgetCredential(selected, policy, { familyKey, sessionKeys: bindKeys })
+          if (familyKey) {
+            return {
+              ...result,
+              accountId: selected.accountId,
+              vmId: selected.vmId,
+              attemptCount: attemptNo,
+              finalState: result?.terminalState || 'rejected',
+              policy,
+            }
+          }
         }
         if (!shouldContinue(policy)) {
           return {
@@ -808,7 +822,17 @@ export class FailoverRunner {
         }
         applyCooldown(this.scheduler, selected, policy, model, this.stickyRouter, { diagnosticPin: !!pinVmId })
         if (!pinVmId && isCredentialDeath(policy)) {
-          this.forgetCredential(selected, policy)
+          this.forgetCredential(selected, policy, { familyKey, sessionKeys: bindKeys })
+          if (familyKey) {
+            return {
+              ...result,
+              accountId: selected.accountId,
+              vmId: selected.vmId,
+              attemptCount: attemptNo,
+              finalState: result.terminalState,
+              policy,
+            }
+          }
         }
         policy = await this.recoverCredential(selected, policy)
         const hopMs = Date.now() - attemptStarted

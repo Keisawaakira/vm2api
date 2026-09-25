@@ -383,6 +383,26 @@ export class StickyRouter {
     return true
   }
 
+  /** Move an entire family together. Session rows stay until their next turn. */
+  rebindFamily(key, { accountId, vmId } = {}) {
+    if (!key || !this.config.enabled || !accountId || !vmId) return null
+    const ttl = (this.config.ttl_seconds || 86400) * 1000
+    const prev = this.repo.get(key) || {}
+    const generation = (Number(prev.generation) || 0) + 1
+    this.repo.upsert(key, {
+      account_id: accountId,
+      vm_id: vmId,
+      session_id: null,
+      device_id: prev.device_id || null,
+      bound_at: Date.now(),
+      expires_at: Date.now() + ttl,
+      hits: prev.hits || 0,
+      generation,
+      slot_index: null,
+    })
+    return { generation, vmId, accountId }
+  }
+
   unbind(key) {
     if (!key) return
     this.repo.remove(key)

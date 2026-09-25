@@ -166,14 +166,14 @@ unixTest('callGoWorker marks null TTL as client-owned cache breakpoints', async 
   }
 })
 
-unixTest('streamGoWorker rejects terminal-only SSE even when worker reports verified', async () => {
+unixTest('streamGoWorker accepts message_stop before delayed EOF', async () => {
   const fx = await fixture((req, res) => {
     res.setHeader('content-type', 'text/event-stream')
     res.setHeader('trailer', 'x-kin-terminal-state')
     res.write('event: message_start\ndata: {"type":"message_start","message":{}}\n\n')
     res.write('event: message_stop\ndata: {"type":"message_stop"}\n\n')
     res.addTrailers({ 'x-kin-terminal-state': 'verified' })
-    res.end()
+    setTimeout(() => res.end(), 50)
   })
   try {
     const lines = []
@@ -182,16 +182,16 @@ unixTest('streamGoWorker rejects terminal-only SSE even when worker reports veri
       body: { model: 'claude-test', stream: true, messages: [{ role: 'user', content: 'hi' }] },
       onEvent: (line) => lines.push(line),
     })
-    assert.equal(result.ok, false)
-    assert.equal(result.terminalState, 'incomplete')
-    assert.equal(result.committed, false)
-    assert.equal(lines.length, 0)
+    assert.equal(result.ok, true)
+    assert.equal(result.terminalState, 'verified')
+    assert.equal(result.committed, true)
+    assert.ok(lines.some((line) => line.includes('message_stop')))
   } finally {
     await fx.close()
   }
 })
 
-unixTest('streamGoWorker requires visible output in addition to stop_reason trailers', async () => {
+unixTest('streamGoWorker accepts message_stop with usage trailers', async () => {
   const fx = await fixture((req, res) => {
     assert.equal(req.headers.te, 'trailers')
     res.setHeader('content-type', 'text/event-stream')
@@ -212,8 +212,8 @@ unixTest('streamGoWorker requires visible output in addition to stop_reason trai
       body: { model: 'claude-haiku-4-5-20251001', stream: true, messages: [{ role: 'user', content: 'hi' }] },
       onEvent: () => {},
     })
-    assert.equal(result.ok, false)
-    assert.equal(result.terminalState, 'incomplete')
+    assert.equal(result.ok, true)
+    assert.equal(result.terminalState, 'verified')
     assert.equal(result.usage.input_tokens, 12)
     assert.equal(result.model, 'claude-haiku-4-5-20251001')
     assert.equal(result.stopReason, 'end_turn')
@@ -223,7 +223,7 @@ unixTest('streamGoWorker requires visible output in addition to stop_reason trai
   }
 })
 
-unixTest('streamGoWorker keeps rate-limit trailers on an incomplete response', async () => {
+unixTest('streamGoWorker keeps rate-limit trailers after message_stop', async () => {
   const fx = await fixture((req, res) => {
     res.setHeader('content-type', 'text/event-stream')
     res.setHeader('trailer', 'x-kin-terminal-state, x-kin-rate-limit-headers')
@@ -244,8 +244,8 @@ unixTest('streamGoWorker keeps rate-limit trailers on an incomplete response', a
       body: { model: 'claude-sonnet-5', stream: true, messages: [{ role: 'user', content: 'hi' }] },
       onEvent: () => {},
     })
-    assert.equal(result.ok, false)
-    assert.equal(result.terminalState, 'incomplete')
+    assert.equal(result.ok, true)
+    assert.equal(result.terminalState, 'verified')
     assert.equal(result.headers['anthropic-ratelimit-unified-5h-utilization'], '0.81')
     assert.equal(result.headers['set-cookie'], undefined)
   } finally {
@@ -302,7 +302,7 @@ unixTest('streamGoWorker restores a streamed overloaded_error to 529', async () 
   }
 })
 
-unixTest('streamGoWorker marks a hop with no content as empty_response', async () => {
+unixTest('streamGoWorker accepts an empty message_stop terminal', async () => {
   const fx = await fixture((req, res) => {
     res.setHeader('content-type', 'text/event-stream')
     res.write('data: {"type":"message_start","message":{"content":[]}}\n\n')
@@ -315,9 +315,9 @@ unixTest('streamGoWorker marks a hop with no content as empty_response', async (
       body: { model: 'claude-haiku-4-5', stream: true, messages: [{ role: 'user', content: 'hi' }] },
       onEvent: () => {},
     })
-    assert.equal(result.status, 200)
-    assert.equal(result.body.error.code, 'empty_response')
-    assert.equal(result.terminalState, 'incomplete')
+    assert.equal(result.ok, true)
+    assert.equal(result.terminalState, 'verified')
+    assert.equal(result.sawMessageStop, true)
   } finally {
     await fx.close()
   }

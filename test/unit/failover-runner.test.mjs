@@ -588,6 +588,36 @@ test('aborted signal stops before another account is tried', async () => {
   assert.equal(scheduler.cooldowns.length, 0)
 })
 
+test('client cancellation preserves sticky session and skips account cleanup', async () => {
+  const scheduler = new Scheduler([candidate(1)])
+  const controller = new AbortController()
+  const unbound = []
+  const result = await new FailoverRunner({
+    scheduler,
+    stickyRouter: { unbindByAccount: (value) => unbound.push(value) },
+    config: { same_account_retry_delay_ms: 0 },
+  }).run({
+    requestId: 'req-cancel-preserve-session',
+    canonicalBody: { model: 'claude-opus-test' },
+    model: 'claude-opus-test',
+    stickyKey: 'parent-session',
+    signal: controller.signal,
+    callAttempt: () => {
+      controller.abort()
+      return {
+        ok: false,
+        status: 499,
+        clientCancelled: true,
+        terminalState: 'cancelled',
+        body: { type: 'error', error: { code: 'client_cancelled', message: 'Client closed the connection' } },
+      }
+    },
+  })
+  assert.equal(result.status, 499)
+  assert.equal(result.body.error.code, 'client_cancelled')
+  assert.deepEqual(unbound, [])
+})
+
 test('streamed plan limit writes the hard block and rotates to another account', async () => {
   const scheduler = new Scheduler([candidate(1), candidate(2)])
   const blocks = []

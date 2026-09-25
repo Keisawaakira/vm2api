@@ -143,9 +143,12 @@ export function createHandleProtocol(deps) {
   }
 
   function finishClientCancel(res, result, logBag) {
-    logBag.error_code = 'client_cancelled'
+    // Client cancellation is a lifecycle terminal, not a request error. Keep
+    // final_state for audit, but leave error fields empty so the cancelled turn
+    // can continue on the same sticky session with an edited request.
+    logBag.error_code = null
     logBag.final_state = 'cancelled'
-    logBag.error_message = result?.body?.error?.message || 'Client closed the connection'
+    logBag.error_message = null
     if (responseClosed(res)) return
     if (res.headersSent) res.end()
   }

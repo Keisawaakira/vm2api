@@ -1039,12 +1039,14 @@ export class PoolScheduler {
     if (book.inflight.size >= limit) return null
     const key = String(sessionKey || '')
     const preferred = key ? book.preferred.get(key) : null
-    let index = Number.isInteger(preferred) ? preferred : null
-    if (index == null) {
-      const taken = new Set([...book.preferred.values(), ...book.inflight.values()])
+    const busy = new Set(book.inflight.values())
+    let index
+    if (Number.isInteger(preferred)) {
+      index = preferred
+    } else {
       index = 0
-      while (taken.has(index)) index += 1
-      if (index >= limit) index = 0
+      while (busy.has(index)) index += 1
+      if (index >= limit) return null
       if (key) book.preferred.set(key, index)
     }
     const holdKey = `live:${key || 'anon'}:${index}:${Date.now()}:${Math.random().toString(16).slice(2)}`

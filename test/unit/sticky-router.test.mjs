@@ -3,12 +3,40 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { StickyRouter, childDeclaredWithoutParent } from '../../src/lib/pool/sticky-router.mjs'
+import { StickyRouter, childDeclaredWithoutParent, explicitParentSessionId } from '../../src/lib/pool/sticky-router.mjs'
 import { ProxyPool } from '../../src/lib/vm/proxy-pool.mjs'
 
 function tmpDir(prefix = 'kin-sticky-') {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix))
 }
+
+test('string and header parent ids stay on one family and do not cross API keys', () => {
+  const r = new StickyRouter({ dataDir: tmpDir(), config: { sticky: { enabled: true } } })
+  const req = { apiKeyRecord: { id: 'key-a' }, headers: {} }
+  const other = { apiKeyRecord: { id: 'key-b' }, headers: {} }
+  const child = {
+    metadata: {
+      user_id: JSON.stringify({
+        device_id: 'same-device',
+        session_id: 'child-sess',
+        parent_session_id: 'parent-sess',
+      }),
+    },
+  }
+  assert.equal(explicitParentSessionId(child, {}), 'parent-sess')
+  assert.equal(explicitParentSessionId({ metadata: { user_id: { device_id: 'same-device', session_id: 'other' } } }, {}), '')
+  assert.equal(explicitParentSessionId({}, { 'x-kin-root-session': 'root-sess' }), 'root-sess')
+  const familyA = r.familyKey(req, 'parent-sess', 'anthropic')
+  const familyB = r.familyKey(other, 'parent-sess', 'anthropic')
+  const otherParent = r.familyKey(req, 'second-parent', 'anthropic')
+  assert.notEqual(familyA, familyB)
+  assert.notEqual(familyA, otherParent)
+  r.bind(familyA, { accountId: 'acc', vmId: 'vm-10' })
+  const moved = r.rebindFamily(familyA, { accountId: 'acc-2', vmId: 'vm-20' })
+  assert.equal(moved.generation, 2)
+  assert.equal(r.resolve(familyA).vmId, 'vm-20')
+  assert.equal(r.resolve(familyA).sessionId, null)
+})
 
 test('a declared child without parent or root is rejected as a relation', () => {
   assert.equal(childDeclaredWithoutParent({ metadata: { kin_child: true } }, {}), true)

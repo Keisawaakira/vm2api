@@ -1873,6 +1873,38 @@ test('session slots cap concurrent seats on one VM', async (t) => {
   other.release()
 })
 
+test('parent and child sessions take two seats and do not share an inflight slot', async (t) => {
+  const root = project()
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const file = path.join(root, 'vms', 'vm-01.json')
+  const vm = JSON.parse(fs.readFileSync(file, 'utf8'))
+  vm.policy.sessionSlots = 2
+  fs.writeFileSync(file, JSON.stringify(vm))
+  const pool = scheduler(root, { accountQuota: { canAccept: () => ({ ok: true }) } })
+  const parent = await pool.selectAndReserve({
+    model: 'claude-test',
+    stickyKey: 'parent-sess',
+    familyVmId: 'vm-01',
+    excluded: new Set(['account-2']),
+    allowWait: false,
+  })
+  const child = await pool.selectAndReserve({
+    model: 'claude-sonnet-test',
+    stickyKey: 'child-sess',
+    familyVmId: 'vm-01',
+    excluded: new Set(['account-2']),
+    allowWait: false,
+  })
+  assert.equal(parent.ok, true)
+  assert.equal(child.ok, true)
+  assert.equal(parent.vmId, 'vm-01')
+  assert.equal(child.vmId, 'vm-01')
+  assert.notEqual(parent.slotIndex, child.slotIndex)
+  assert.equal(pool.acquireSlot('vm-01', 'third-sess', 2), null)
+  parent.release()
+  child.release()
+})
+
 test('parallel sessions take free seats on another VM', async (t) => {
   const root = project()
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
