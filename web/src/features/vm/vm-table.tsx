@@ -7,6 +7,7 @@ import { fmtNum, fmtUsd, usedPctOf } from '@/lib/format'
 import { tierVisual } from '@/lib/tier-visual'
 import { cn } from '@/lib/utils'
 import { isCodexVm, platformLabel, slotNameLabel } from '@/lib/vm-kind'
+import { OpenaiQuotaActions } from '@/features/vm/openai-quota-actions'
 import {
   claudeTier,
   credentialStatus,
@@ -297,7 +298,10 @@ function VmCard({
         </Link>
 
         <div className='hairline-t mt-3 flex items-center justify-between gap-2 pt-2'>
-          <StatusMark tone={credentialStatus(vm)} variant='pill' />
+          <div className='flex min-w-0 items-center gap-1.5'>
+            <StatusMark tone={credentialStatus(vm)} variant='pill' />
+            {isCodexVm(vm) ? <OpenaiQuotaActions vm={vm} compact /> : null}
+          </div>
           <div className='flex items-center gap-1'>
             {hasActions ? (
               <div className='hidden items-center gap-0.5 transition-opacity md:flex md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100'>
