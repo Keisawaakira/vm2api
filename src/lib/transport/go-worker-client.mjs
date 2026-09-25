@@ -19,7 +19,7 @@ import {
 import { isApiKeyMode } from '../oauth/credential-mode.mjs'
 import { runSlotOauth } from './slot-oauth.mjs'
 import { applyClaudeSSELineToMessage, createClaudeMessageAssembler } from '../protocol/convert.mjs'
-import { isCompleteAssistantMessage, isWrapConnectionError } from '../core/errors.mjs'
+import { clientCancelledResult, isCompleteAssistantMessage, isWrapConnectionError } from '../core/errors.mjs'
 import { extraHeadersFromLimitError, isPlanLimitMessage } from '../pool/quota-window.mjs'
 
 const MAX_BODY = 64 * 1024 * 1024
@@ -738,6 +738,13 @@ export async function streamGoWorker({
       if (idleTimer) clearInterval(idleTimer)
     }
   } catch (error) {
+    if (signal?.aborted) {
+      return clientCancelledResult({
+        via: 'go-worker-stream',
+        ttftMs,
+        committed,
+      })
+    }
     return {
       ok: false,
       status: 0,
