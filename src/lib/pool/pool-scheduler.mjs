@@ -235,6 +235,7 @@ export class PoolScheduler {
     deadline = null,
     allowWait = true,
     pinVmId = null,
+    familyVmId = null,
     ownerScope = PLATFORM_SCOPE,
     stickyKeys = null,
   } = {}) {
@@ -277,6 +278,7 @@ export class PoolScheduler {
         excluded: blocked,
         signal,
         pinVmId,
+        familyVmId,
         sessionKey: stickyKey,
         ownerScope,
       })
@@ -378,6 +380,7 @@ export class PoolScheduler {
     excluded = new Set(),
     signal,
     pinVmId = null,
+    familyVmId = null,
     sessionKey = null,
     ownerScope = PLATFORM_SCOPE,
   } = {}) {
@@ -386,9 +389,11 @@ export class PoolScheduler {
     const summaries = listVms(this.projectRoot)
     const candidates = []
     const pin = pinVmId ? String(pinVmId).trim() : ''
+    const familyVm = familyVmId ? String(familyVmId).trim() : ''
     for (const summary of summaries) {
       if (signal?.aborted) throw makeAbortError()
       if (pin && summary.id !== pin) continue
+      if (!pin && familyVm && summary.id !== familyVm) continue
       const vm = getVm(this.projectRoot, summary.id)
       if (!vm) continue
       if (!pin && platformMismatch(model, vm)) continue

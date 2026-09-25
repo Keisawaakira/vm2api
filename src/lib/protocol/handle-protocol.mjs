@@ -78,7 +78,7 @@ import {
   resolveOutboundSessionId,
   sessionContextDiscriminator,
 } from '../identity/identity-rewrite.mjs'
-import { clientIp } from '../pool/sticky-router.mjs'
+import { clientIp, explicitParentSessionId } from '../pool/sticky-router.mjs'
 import {
   applyCrsUnofficialPersona,
   detectProxiedOfficialCcFromRoutingFile,
@@ -609,6 +609,10 @@ export function createHandleProtocol(deps) {
     const stickyDeviceId = String(parseUserId(inbound?.metadata?.user_id)?.device_id || '').trim()
     const stickyKey = stickyRouter?.extractPoolKey?.(req, inbound, { platform: 'anthropic' }) || null
     const stickyKeys = stickyRouter?.collectPoolKeys?.(req, inbound, { platform: 'anthropic' }) || []
+    const parentSession = explicitParentSessionId(inbound, req.headers)
+    const familySession = parentSession || callerSession
+    const familyKey = familySession ? stickyRouter?.familyKey?.(req, familySession, 'anthropic') || null : null
+    const familyVmId = familyKey ? stickyRouter?.resolve?.(familyKey)?.vmId || null : null
     const stickyBound =
       stickyKey && typeof stickyRouter?.resolve === 'function' ? stickyRouter.resolve(stickyKey) : null
     const outboundSessionId = resolveOutboundSessionId(callerSession, {
@@ -815,6 +819,8 @@ export function createHandleProtocol(deps) {
         stickyKey,
         stickyKeys,
         stickyDeviceId,
+        familyKey,
+        familyVmId,
         pinVmId,
         ownerScope,
         countUsage: !healthReal,

@@ -403,6 +403,8 @@ export class FailoverRunner {
     callAttempt,
     onAttempt = null,
     pinVmId = null,
+    familyKey = null,
+    familyVmId = null,
     ownerScope = null,
     countUsage = true,
   } = {}) {
@@ -438,6 +440,9 @@ export class FailoverRunner {
         const guard = prev ? { ...opts, ifGeneration: prev.generation || 0 } : opts
         this.stickyRouter.bind(key, payload, guard)
       }
+      if (familyKey && account.vmId) {
+        this.stickyRouter.bind(familyKey, { accountId: account.accountId, vmId: account.vmId }, { countHit: false })
+      }
     }
     let lastResult = null
     let lastPolicy = null
@@ -472,6 +477,7 @@ export class FailoverRunner {
           deadline,
           allowWait: true,
           pinVmId,
+          familyVmId,
           ownerScope,
         })
       } catch (error) {
