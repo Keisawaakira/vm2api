@@ -332,6 +332,11 @@ export class PoolScheduler {
         requestDeadline: loopDeadline,
       })
       if (waitPlan?.queueFull && waitPlan.sticky) {
+        // A bound family may wait or use another account on that same VM.
+        // It must not spill onto a different VM.
+        if (familyVmId) {
+          return fail('all_accounts_busy', waitCandidates, waitAvailable, waitPool)
+        }
         // Queue full on the bound account: this one request spills (sub2api
         // Layer 1 spillover). The durable pin stays so the next turn returns.
         stickyCleared = true

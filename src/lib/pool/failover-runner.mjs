@@ -526,6 +526,13 @@ export class FailoverRunner {
         },
         { countHit: false },
       )
+      if (familyKey) {
+        const locked = this.stickyRouter.resolve?.(familyKey)
+        if (locked?.vmId && locked.vmId !== selected.vmId) {
+          familyVmId = locked.vmId
+          continue
+        }
+      }
       const attemptStarted = Date.now()
       this.attemptsRepo?.begin?.({
         requestId,
