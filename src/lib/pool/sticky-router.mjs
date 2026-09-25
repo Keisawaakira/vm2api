@@ -146,6 +146,26 @@ export function isParentSessionCompanion(body = {}) {
   return /x-anthropic-billing-header/i.test(system) && /you are claude code/i.test(system)
 }
 
+export function explicitParentSessionId(body = {}, headers = {}) {
+  const parsed = parseUserId(body?.metadata?.user_id) || {}
+  const meta = body?.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata) ? body.metadata : {}
+  return String(
+    parsed.root_session_id ||
+      parsed.parent_session_id ||
+      meta.root_session_id ||
+      meta.parent_session_id ||
+      headers?.['x-kin-root-session'] ||
+      headers?.['x-kin-parent-session'] ||
+      '',
+  ).trim()
+}
+
+export function childDeclaredWithoutParent(body = {}, headers = {}) {
+  const meta = body?.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata) ? body.metadata : {}
+  const declared = meta.kin_child === true || String(meta.kin_child || headers?.['x-kin-child'] || '') === '1'
+  return declared && !explicitParentSessionId(body, headers)
+}
+
 export class StickyRouter {
   constructor({ dataDir, db, config }) {
     this.db = resolveStoreDb({ db, dataDir })
@@ -227,10 +247,8 @@ export class StickyRouter {
     return this.isolateKey(`dev:${device}`, req)
   }
 
-  /** Ordered aliases for one logical conversation. A caller session is the only key.
-   * A parent-session companion does not open its own slot: it reuses the live
-   * parent bound to the same device_id, or one device-family slot if none is live.
-   * API key only namespaces the row. It does not choose which parent.
+  /** Ordered aliases for one logical conversation. Each caller session keeps its own key.
+   * A child does not reuse the parent key or a device-wide fam slot.
    */
   collectPoolKeys(req, body = {}, opts = {}) {
     if (!this.config.enabled) return []
@@ -239,20 +257,6 @@ export class StickyRouter {
     const add = (key) => {
       const scoped = scopeStickyKey(key, platform)
       if (scoped && !keys.includes(scoped)) keys.push(scoped)
-    }
-    if (isParentSessionCompanion(body)) {
-      const device = String(parseUserId(body?.metadata?.user_id)?.device_id || '').trim()
-      const parent = device
-        ? this.latestParentPoolKey(req, { platform: platform || 'anthropic', deviceId: device })
-        : null
-      if (parent) {
-        add(parent)
-        return keys
-      }
-      if (device) {
-        add(this.isolateKey(`fam:${device}`, req))
-        return keys
-      }
     }
     const caller = extractCallerSession({ inbound: body, body, headers: req?.headers || {} })
     if (caller && !EPHEMERAL_STICKY_KEYS.has(String(caller).toLowerCase())) {
@@ -315,6 +319,12 @@ export class StickyRouter {
     return keys[0] || null
   }
 
+  familyKey(req, sessionId, platform = '') {
+    const id = String(sessionId || '').trim()
+    if (!id || !this.config.enabled) return null
+    return scopeStickyKey(this.isolateKey(`family:${id}`, req), platform)
+  }
+
   /** @returns {{ accountId: string, vmId: string } | null } */
   resolve(key) {
     if (!key || !this.config.enabled) return null
@@ -371,6 +381,26 @@ export class StickyRouter {
       slot_index: nextSlot,
     })
     return true
+  }
+
+  /** Move an entire family together. Session rows stay until their next turn. */
+  rebindFamily(key, { accountId, vmId } = {}) {
+    if (!key || !this.config.enabled || !accountId || !vmId) return null
+    const ttl = (this.config.ttl_seconds || 86400) * 1000
+    const prev = this.repo.get(key) || {}
+    const generation = (Number(prev.generation) || 0) + 1
+    this.repo.upsert(key, {
+      account_id: accountId,
+      vm_id: vmId,
+      session_id: null,
+      device_id: prev.device_id || null,
+      bound_at: Date.now(),
+      expires_at: Date.now() + ttl,
+      hits: prev.hits || 0,
+      generation,
+      slot_index: null,
+    })
+    return { generation, vmId, accountId }
   }
 
   unbind(key) {

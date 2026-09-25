@@ -249,7 +249,7 @@ test('committed realtime stream failure never switches accounts', async () => {
   assert.equal(scheduler.selectCalls, 1)
 })
 
-test('committed incomplete hop drops the session window immediately', async () => {
+test('committed incomplete hop keeps the session window', async () => {
   const sessions = new SessionLimitRegistry()
   sessions.touch('account-1', 'conversation-1')
   const scheduler = new Scheduler([candidate(1), candidate(2)])
@@ -272,7 +272,7 @@ test('committed incomplete hop drops the session window immediately', async () =
     },
   })
   assert.equal(result.finalState, 'incomplete')
-  assert.equal(sessions.snapshot('account-1').active, 0)
+  assert.equal(sessions.snapshot('account-1').active, 1)
 })
 
 test('cloudflare 403 does not trigger SOCKS disconnect', async () => {
@@ -509,7 +509,7 @@ test('thinking-only hop retries same account and returns the later text', async 
   assert.equal(result.body.stop_reason, 'end_turn')
 })
 
-test('repeated incomplete hop parks the account then switches', async () => {
+test('repeated incomplete hop stays on the account and returns 502', async () => {
   const scheduler = new Scheduler([candidate(1), candidate(2)])
   const parked = []
   const runner = new FailoverRunner({
@@ -538,10 +538,12 @@ test('repeated incomplete hop parks the account then switches', async () => {
       }
     },
   })
-  assert.equal(result.ok, true)
-  assert.equal(result.vmId, 'vm-02')
-  assert.deepEqual(seen, ['vm-01', 'vm-01', 'vm-02'])
-  assert.deepEqual(parked, [{ accountId: 'account-1', vmId: 'vm-01' }])
+  assert.equal(result.ok, false)
+  assert.equal(result.status, 502)
+  assert.equal(result.body.error.code, 'incomplete_response')
+  assert.equal(result.vmId, 'vm-01')
+  assert.deepEqual(seen, ['vm-01', 'vm-01'])
+  assert.deepEqual(parked, [])
 })
 
 test('pinned incomplete hop still stops on the pinned VM', async () => {
@@ -563,6 +565,57 @@ test('pinned incomplete hop still stops on the pinned VM', async () => {
   assert.equal(result.status, 502)
   assert.equal(result.body.error.code, 'incomplete_response')
   assert.equal(result.vmId, 'vm-01')
+})
+
+test('aborted signal stops before another account is tried', async () => {
+  const scheduler = new Scheduler([candidate(1), candidate(2)])
+  const runner = new FailoverRunner({ scheduler, config: { same_account_retry_delay_ms: 0 } })
+  const seen = []
+  const signal = AbortSignal.abort()
+  const result = await runner.run({
+    requestId: 'req-cancel',
+    canonicalBody: { model: 'claude-opus-test' },
+    model: 'claude-opus-test',
+    signal,
+    callAttempt: ({ candidate: selected }) => {
+      seen.push(selected.vmId)
+      return success('should not run')
+    },
+  })
+  assert.equal(result.body.error.code, 'client_cancelled')
+  assert.equal(result.status, 499)
+  assert.deepEqual(seen, [])
+  assert.equal(scheduler.cooldowns.length, 0)
+})
+
+test('client cancellation preserves sticky session and skips account cleanup', async () => {
+  const scheduler = new Scheduler([candidate(1)])
+  const controller = new AbortController()
+  const unbound = []
+  const result = await new FailoverRunner({
+    scheduler,
+    stickyRouter: { unbindByAccount: (value) => unbound.push(value) },
+    config: { same_account_retry_delay_ms: 0 },
+  }).run({
+    requestId: 'req-cancel-preserve-session',
+    canonicalBody: { model: 'claude-opus-test' },
+    model: 'claude-opus-test',
+    stickyKey: 'parent-session',
+    signal: controller.signal,
+    callAttempt: () => {
+      controller.abort()
+      return {
+        ok: false,
+        status: 499,
+        clientCancelled: true,
+        terminalState: 'cancelled',
+        body: { type: 'error', error: { code: 'client_cancelled', message: 'Client closed the connection' } },
+      }
+    },
+  })
+  assert.equal(result.status, 499)
+  assert.equal(result.body.error.code, 'client_cancelled')
+  assert.deepEqual(unbound, [])
 })
 
 test('streamed plan limit writes the hard block and rotates to another account', async () => {
@@ -941,7 +994,7 @@ test('pool exhaustion details include the scheduler snapshot', async () => {
   assert.deepEqual(result.body.error.details.wait_reasons, ['account_cooldown'])
 })
 
-test('thinking-only hop without message_stop switches after the same-account retry', async () => {
+test('thinking-only hop without message_stop returns 502 on the same account', async () => {
   const scheduler = new Scheduler([candidate(1), candidate(2)])
   const seen = []
   const runner = new FailoverRunner({
@@ -968,12 +1021,12 @@ test('thinking-only hop without message_stop switches after the same-account ret
       }
     },
   })
-  assert.equal(result.status, 503)
-  assert.equal(result.body.error.code, 'account_pool_exhausted')
-  assert.deepEqual(seen, ['vm-01', 'vm-01', 'vm-02', 'vm-02'])
+  assert.equal(result.status, 502)
+  assert.equal(result.body.error.code, 'incomplete_response')
+  assert.deepEqual(seen, ['vm-01', 'vm-01'])
 })
 
-test('incomplete hops without message_stop try the next account', async () => {
+test('incomplete hops without message_stop do not try the next account', async () => {
   const scheduler = new Scheduler([candidate(1), candidate(2)])
   const seen = []
   const runner = new FailoverRunner({
@@ -1000,9 +1053,9 @@ test('incomplete hops without message_stop try the next account', async () => {
       }
     },
   })
-  assert.equal(result.status, 503)
-  assert.equal(result.body.error.code, 'account_pool_exhausted')
-  assert.deepEqual(seen, ['vm-01', 'vm-01', 'vm-02', 'vm-02'])
+  assert.equal(result.status, 502)
+  assert.equal(result.body.error.code, 'incomplete_response')
+  assert.deepEqual(seen, ['vm-01', 'vm-01'])
 })
 
 test('same sticky session requests execute serially', async () => {

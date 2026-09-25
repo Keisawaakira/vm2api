@@ -78,7 +78,7 @@ import {
   resolveOutboundSessionId,
   sessionContextDiscriminator,
 } from '../identity/identity-rewrite.mjs'
-import { clientIp } from '../pool/sticky-router.mjs'
+import { clientIp, childDeclaredWithoutParent, explicitParentSessionId } from '../pool/sticky-router.mjs'
 import {
   applyCrsUnofficialPersona,
   detectProxiedOfficialCcFromRoutingFile,
@@ -138,6 +138,40 @@ export function createHandleProtocol(deps) {
     typeof deps.getHealthMonitor === 'function' ? deps.getHealthMonitor() : deps.healthMonitor
   const getFailoverRunner = () =>
     typeof deps.getFailoverRunner === 'function' ? deps.getFailoverRunner() : deps.failoverRunner
+  function responseClosed(res) {
+    return !!(res?.destroyed || res?.writableEnded || res?.closed)
+  }
+
+  function finishClientCancel(res, result, logBag) {
+    // Client cancellation is a lifecycle terminal, not a request error. Keep
+    // final_state for audit, but leave error fields empty so the cancelled turn
+    // can continue on the same sticky session with an edited request.
+    logBag.error_code = null
+    logBag.final_state = 'cancelled'
+    logBag.error_message = null
+    if (responseClosed(res)) return
+    if (res.headersSent) res.end()
+  }
+
+  function bindClientAbort(req, res) {
+    const abortController = new AbortController()
+    let settled = false
+    const onGone = () => {
+      if (settled) return
+      if (!abortController.signal.aborted) abortController.abort(new Error('client_aborted'))
+    }
+    req.once('aborted', onGone)
+    res.once('close', onGone)
+    return {
+      signal: abortController.signal,
+      settle() {
+        settled = true
+        req.off('aborted', onGone)
+        res.off('close', onGone)
+      },
+    }
+  }
+
   function mapProtocolClientError(result, logBag, fallbackCode) {
     const originalCode = result?.body?.error?.code || fallbackCode
     const originalMessage = result?.body?.error?.message || null
@@ -576,8 +610,27 @@ export function createHandleProtocol(deps) {
     }
     // device_id points a Haiku companion at this turn's session. API key does not.
     const stickyDeviceId = String(parseUserId(inbound?.metadata?.user_id)?.device_id || '').trim()
+    if (childDeclaredWithoutParent(inbound, req.headers)) {
+      stats.errors++
+      logBag.error_code = 'family_relation_required'
+      logBag.error_message = 'Child request is missing parent or root session'
+      return json(
+        res,
+        400,
+        makeError({
+          type: ErrorType.INVALID_REQUEST,
+          code: 'family_relation_required',
+          message: 'Child request is missing parent or root session',
+          status: 400,
+        }).body,
+      )
+    }
     const stickyKey = stickyRouter?.extractPoolKey?.(req, inbound, { platform: 'anthropic' }) || null
     const stickyKeys = stickyRouter?.collectPoolKeys?.(req, inbound, { platform: 'anthropic' }) || []
+    const parentSession = explicitParentSessionId(inbound, req.headers)
+    const familySession = parentSession || callerSession
+    const familyKey = familySession ? stickyRouter?.familyKey?.(req, familySession, 'anthropic') || null : null
+    const familyVmId = familyKey ? stickyRouter?.resolve?.(familyKey)?.vmId || null : null
     const stickyBound =
       stickyKey && typeof stickyRouter?.resolve === 'function' ? stickyRouter.resolve(stickyKey) : null
     const outboundSessionId = resolveOutboundSessionId(callerSession, {
@@ -640,11 +693,7 @@ export function createHandleProtocol(deps) {
           )
         }
       }
-      const abortController = new AbortController()
-      const onAborted = () => {
-        if (!abortController.signal.aborted) abortController.abort(new Error('client_aborted'))
-      }
-      req.once('aborted', onAborted)
+      const clientAbort = bindClientAbort(req, res)
       const clientStream = isClientStream(inbound, req.headers)
       const requestedDelivery = String(
         req.headers['x-kin-delivery'] || getRouting()?.failover?.delivery_mode || 'realtime',
@@ -666,7 +715,7 @@ export function createHandleProtocol(deps) {
           convertedBody: ctx.body,
           clientStream,
           deliveryMode,
-          signal: abortController.signal,
+          signal: clientAbort.signal,
           timeoutMs: cfg.limits.upstream_timeout_ms,
           personaHideTokens,
           cacheTtl,
@@ -684,7 +733,7 @@ export function createHandleProtocol(deps) {
           },
         })
       } finally {
-        req.off('aborted', onAborted)
+        clientAbort.settle()
         if (managedKey) {
           try {
             apiKeyStore.release(managedKey)
@@ -707,6 +756,7 @@ export function createHandleProtocol(deps) {
         } catch {}
       }
       if (clientStream) {
+        if (isClientCancelledResult(result)) return finishClientCancel(res, result, logBag)
         if (!res.headersSent) {
           const mapped = mapProtocolClientError(result, logBag, 'api_pool_exhausted')
           if (!isClientCancelledResult(result)) stats.errors++
@@ -716,6 +766,7 @@ export function createHandleProtocol(deps) {
         return res.end()
       }
       if (!result?.ok) {
+        if (isClientCancelledResult(result)) return finishClientCancel(res, result, logBag)
         const mapped = mapProtocolClientError(result, logBag, 'upstream_error')
         stats.errors++
         return json(res, mapped.status, mapped.body)
@@ -753,11 +804,7 @@ export function createHandleProtocol(deps) {
       }
     }
 
-    const abortController = new AbortController()
-    const onAborted = () => {
-      if (!abortController.signal.aborted) abortController.abort(new Error('client_aborted'))
-    }
-    req.once('aborted', onAborted)
+    const clientAbort = bindClientAbort(req, res)
 
     const clientStream = isClientStream(inbound, req.headers)
     const upstreamStream = true
@@ -790,12 +837,14 @@ export function createHandleProtocol(deps) {
         stickyKey,
         stickyKeys,
         stickyDeviceId,
+        familyKey,
+        familyVmId,
         pinVmId,
         ownerScope,
         countUsage: !healthReal,
         stream: upstreamStream,
         deliveryMode,
-        signal: abortController.signal,
+        signal: clientAbort.signal,
         applyAttempt: async (body, selected, extra = {}) => {
           try {
             touchTelemetrySession(cfg.paths.project, selected.vmId)
@@ -1010,7 +1059,7 @@ export function createHandleProtocol(deps) {
         },
       })
     } finally {
-      req.off('aborted', onAborted)
+      clientAbort.settle()
       if (managedKey) {
         try {
           apiKeyStore.release(managedKey)
@@ -1081,6 +1130,7 @@ export function createHandleProtocol(deps) {
     }
 
     if (clientStream) {
+      if (isClientCancelledResult(result)) return finishClientCancel(res, result, logBag)
       if (!res.headersSent) {
         const mapped = mapProtocolClientError(result, logBag, result?.body?.error?.code || 'upstream_error')
         if (!isClientCancelledResult(result) && mapped.body?.error?.code !== 'client_cancelled') stats.errors++
@@ -1090,20 +1140,16 @@ export function createHandleProtocol(deps) {
         res.write('data: [DONE]\n\n')
       }
       if (!result?.ok) {
-        if (isClientCancelledResult(result)) {
-          logBag.error_code = 'client_cancelled'
-          logBag.error_message = result?.body?.error?.message || 'Client closed the connection'
-        } else {
-          stats.errors++
-          logBag.error_code = result?.body?.error?.code || 'stream_incomplete'
-          logBag.error_message = result?.body?.error?.message || 'Stream did not reach a verified terminal state'
-        }
+        stats.errors++
+        logBag.error_code = result?.body?.error?.code || 'stream_incomplete'
+        logBag.error_message = result?.body?.error?.message || 'Stream did not reach a verified terminal state'
       }
       rememberRefusal({ inbound, body: ctx.body, result, logBag, requestId: logCtx.request_id })
       return res.end()
     }
 
     if (!result?.ok || isIncompleteAssistantMessage(result)) {
+      if (isClientCancelledResult(result)) return finishClientCancel(res, result, logBag)
       const failed = isIncompleteAssistantMessage(result) ? incompleteAssistantClientError(result) : result
       const mapped = mapProtocolClientError(failed, logBag, failed?.body?.error?.code || 'upstream_error')
       if (mapped.body?.error?.code !== 'client_cancelled') stats.errors++

@@ -3,12 +3,52 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { StickyRouter } from '../../src/lib/pool/sticky-router.mjs'
+import { StickyRouter, childDeclaredWithoutParent, explicitParentSessionId } from '../../src/lib/pool/sticky-router.mjs'
 import { ProxyPool } from '../../src/lib/vm/proxy-pool.mjs'
 
 function tmpDir(prefix = 'kin-sticky-') {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix))
 }
+
+test('string and header parent ids stay on one family and do not cross API keys', () => {
+  const r = new StickyRouter({ dataDir: tmpDir(), config: { sticky: { enabled: true } } })
+  const req = { apiKeyRecord: { id: 'key-a' }, headers: {} }
+  const other = { apiKeyRecord: { id: 'key-b' }, headers: {} }
+  const child = {
+    metadata: {
+      user_id: JSON.stringify({
+        device_id: 'same-device',
+        session_id: 'child-sess',
+        parent_session_id: 'parent-sess',
+      }),
+    },
+  }
+  assert.equal(explicitParentSessionId(child, {}), 'parent-sess')
+  assert.equal(explicitParentSessionId({ metadata: { user_id: { device_id: 'same-device', session_id: 'other' } } }, {}), '')
+  assert.equal(explicitParentSessionId({}, { 'x-kin-root-session': 'root-sess' }), 'root-sess')
+  const familyA = r.familyKey(req, 'parent-sess', 'anthropic')
+  const familyB = r.familyKey(other, 'parent-sess', 'anthropic')
+  const otherParent = r.familyKey(req, 'second-parent', 'anthropic')
+  assert.notEqual(familyA, familyB)
+  assert.notEqual(familyA, otherParent)
+  r.bind(familyA, { accountId: 'acc', vmId: 'vm-10' })
+  const moved = r.rebindFamily(familyA, { accountId: 'acc-2', vmId: 'vm-20' })
+  assert.equal(moved.generation, 2)
+  assert.equal(r.resolve(familyA).vmId, 'vm-20')
+  assert.equal(r.resolve(familyA).sessionId, null)
+})
+
+test('a declared child without parent or root is rejected as a relation', () => {
+  assert.equal(childDeclaredWithoutParent({ metadata: { kin_child: true } }, {}), true)
+  assert.equal(
+    childDeclaredWithoutParent(
+      { metadata: { kin_child: true, parent_session_id: 'parent-sess' } },
+      {},
+    ),
+    false,
+  )
+  assert.equal(childDeclaredWithoutParent({ metadata: { user_id: { device_id: 'dev' } } }, {}), false)
+})
 
 test('bind + resolve + hits increment', () => {
   const r = new StickyRouter({ dataDir: tmpDir(), config: { sticky: { enabled: true, ttl_seconds: 60 } } })
@@ -278,7 +318,7 @@ function companionHaiku(sessionId, deviceId = '998dad9c1e3eccf11cd192c3919d4d1f'
   }
 }
 
-test('haiku subagent reuses the parent with the same device_id', () => {
+test('haiku subagent keeps its own session and does not reuse the parent key', () => {
   const r = new StickyRouter({ dataDir: tmpDir(), config: { sticky: { enabled: true } } })
   const device = '8cd2bdff61fcd056'
   const req = { apiKeyRecord: { id: 'key_f0419454c00d' }, headers: { 'user-agent': 'Go-http-client/1.1' } }
@@ -290,44 +330,50 @@ test('haiku subagent reuses the parent with the same device_id', () => {
     ],
     metadata: { user_id: { device_id: device, session_id: 'parent-sess' } },
   }
-  const otherBody = {
-    model: 'claude-opus-5-5',
-    messages: [{ role: 'user', content: 'other device' }],
-    metadata: { user_id: { device_id: '998dad9c1e3eccf11cd192c3919d4d1f', session_id: 'other-sess' } },
-  }
   const parentKey = r.extractPoolKey(req, parentBody, { platform: 'anthropic' })
-  const otherKey = r.extractPoolKey(req, otherBody, { platform: 'anthropic' })
   r.bind(parentKey, { accountId: 'acc-parent', vmId: 'vm-10', sessionId: 'out-parent', deviceId: device })
-  r.bind(otherKey, {
-    accountId: 'acc-other',
-    vmId: 'vm-99',
-    sessionId: 'out-other',
-    deviceId: '998dad9c1e3eccf11cd192c3919d4d1f',
-  })
-  r.bind(parentKey, { accountId: 'acc-parent', vmId: 'vm-10' })
-  assert.equal(r.stats().sessions[parentKey].device_id, device)
-  const first = companionHaiku('1334bab2-94bb-4429-a694-b2fa3434b1f5', device)
-  const second = companionHaiku('e5bee774-fcc6-4f35-a55c-b3586a1f4baa', device)
-  assert.equal(r.extractPoolKey(req, first, { platform: 'anthropic' }), parentKey)
-  assert.deepEqual(r.collectPoolKeys(req, first, { platform: 'anthropic' }), [parentKey])
-  assert.notEqual(parentKey, otherKey)
-  assert.equal(r.extractPoolKey(req, second, { platform: 'anthropic' }), parentKey)
-  assert.equal(r.resolve(parentKey).vmId, 'vm-10')
-  assert.equal(r.stats().active_sessions, 2)
-  const otherApiKey = { apiKeyRecord: { id: 'key_other' }, headers: {} }
-  assert.notEqual(r.extractPoolKey(otherApiKey, first, { platform: 'anthropic' }), parentKey)
+  const child = companionHaiku('1334bab2-94bb-4429-a694-b2fa3434b1f5', device)
+  const childKey = r.extractPoolKey(req, child, { platform: 'anthropic' })
+  assert.notEqual(childKey, parentKey)
+  assert.doesNotMatch(String(childKey), /fam:/)
+  assert.match(String(childKey), /1334bab2-94bb-4429-a694-b2fa3434b1f5/)
 })
 
-test('companion haiku without a live parent share one device family slot', () => {
+test('explicit parent session shares a family VM and keeps a separate session key', () => {
+  const r = new StickyRouter({ dataDir: tmpDir(), config: { sticky: { enabled: true } } })
+  const req = { apiKeyRecord: { id: 'key_family' }, headers: {} }
+  const parentBody = {
+    model: 'claude-opus-5-5',
+    messages: [{ role: 'user', content: 'parent' }],
+    metadata: { user_id: { device_id: 'dev-1', session_id: 'parent-sess' } },
+  }
+  const childBody = {
+    model: 'claude-sonnet-5',
+    messages: [{ role: 'user', content: 'child' }],
+    tools: [{ name: 'Read' }],
+    metadata: { user_id: { device_id: 'dev-1', session_id: 'child-sess', parent_session_id: 'parent-sess' } },
+  }
+  const parentKey = r.extractPoolKey(req, parentBody, { platform: 'anthropic' })
+  const childKey = r.extractPoolKey(req, childBody, { platform: 'anthropic' })
+  assert.notEqual(parentKey, childKey)
+  const family = r.familyKey(req, 'parent-sess', 'anthropic')
+  r.bind(family, { accountId: 'acc-parent', vmId: 'vm-10' })
+  r.bind(parentKey, { accountId: 'acc-parent', vmId: 'vm-10', sessionId: 'out-parent', slotIndex: 0 })
+  r.bind(childKey, { accountId: 'acc-parent', vmId: 'vm-10', sessionId: 'out-child', slotIndex: 1 })
+  assert.equal(r.resolve(family).vmId, 'vm-10')
+  assert.equal(r.resolve(parentKey).slotIndex, 0)
+  assert.equal(r.resolve(childKey).slotIndex, 1)
+  assert.notEqual(r.resolve(parentKey).sessionId, r.resolve(childKey).sessionId)
+})
+
+test('companion haiku sessions stay independent without an explicit parent', () => {
   const r = new StickyRouter({ dataDir: tmpDir(), config: { sticky: { enabled: true } } })
   const req = { apiKeyRecord: { id: 'key_side' }, headers: {} }
   const a = r.extractPoolKey(req, companionHaiku('sess-a'), { platform: 'anthropic' })
   const b = r.extractPoolKey(req, companionHaiku('sess-b'), { platform: 'anthropic' })
-  assert.equal(a, b)
-  assert.match(a, /fam:998dad9c1e3eccf11cd192c3919d4d1f$/)
-  r.bind(a, { accountId: 'acc-side', vmId: 'vm-side' })
-  assert.equal(r.resolve(r.extractPoolKey(req, companionHaiku('sess-c'), { platform: 'anthropic' })).vmId, 'vm-side')
-  assert.equal(r.stats().active_sessions, 1)
+  assert.notEqual(a, b)
+  assert.doesNotMatch(String(a), /fam:/)
+  assert.doesNotMatch(String(b), /fam:/)
 })
 
 test('a stale parent and a real haiku chat do not absorb the companion rule', () => {
@@ -354,7 +400,8 @@ test('a stale parent and a real haiku chat do not absorb the companion rule', ()
   const companion = companionHaiku('fresh-child', device)
   const fam = r.extractPoolKey(req, companion, { platform: 'anthropic' })
   assert.notEqual(fam, parentKey)
-  assert.match(fam, /fam:dev-old$/)
+  assert.match(fam, /fresh-child$/)
+  assert.doesNotMatch(fam, /fam:/)
   const chat = {
     model: 'claude-haiku-4-5',
     tools: [{ name: 'Bash' }],

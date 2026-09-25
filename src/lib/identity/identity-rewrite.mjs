@@ -120,11 +120,13 @@ export function uuidFromSeed(seed) {
 export function parseUserId(raw) {
   if (!raw) return null
   if (typeof raw === 'object') {
-    return {
-      device_id: raw.device_id || raw.deviceId || '',
-      account_uuid: raw.account_uuid || raw.accountUuid || '',
-      session_id: raw.session_id || raw.sessionId || '',
-    }
+      return {
+        device_id: raw.device_id || raw.deviceId || '',
+        account_uuid: raw.account_uuid || raw.accountUuid || '',
+        session_id: raw.session_id || raw.sessionId || '',
+        parent_session_id: raw.parent_session_id || raw.parentSessionId || '',
+        root_session_id: raw.root_session_id || raw.rootSessionId || '',
+      }
   }
   const s = String(raw)
   try {
@@ -134,6 +136,8 @@ export function parseUserId(raw) {
         device_id: p.device_id || p.deviceId || '',
         account_uuid: p.account_uuid || p.accountUuid || '',
         session_id: p.session_id || p.sessionId || '',
+        parent_session_id: p.parent_session_id || p.parentSessionId || '',
+        root_session_id: p.root_session_id || p.rootSessionId || '',
       }
     }
   } catch {}

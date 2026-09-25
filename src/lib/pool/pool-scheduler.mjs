@@ -235,6 +235,7 @@ export class PoolScheduler {
     deadline = null,
     allowWait = true,
     pinVmId = null,
+    familyVmId = null,
     ownerScope = PLATFORM_SCOPE,
     stickyKeys = null,
   } = {}) {
@@ -277,6 +278,7 @@ export class PoolScheduler {
         excluded: blocked,
         signal,
         pinVmId,
+        familyVmId,
         sessionKey: stickyKey,
         ownerScope,
       })
@@ -330,6 +332,11 @@ export class PoolScheduler {
         requestDeadline: loopDeadline,
       })
       if (waitPlan?.queueFull && waitPlan.sticky) {
+        // A bound family may wait or use another account on that same VM.
+        // It must not spill onto a different VM.
+        if (familyVmId) {
+          return fail('all_accounts_busy', waitCandidates, waitAvailable, waitPool)
+        }
         // Queue full on the bound account: this one request spills (sub2api
         // Layer 1 spillover). The durable pin stays so the next turn returns.
         stickyCleared = true
@@ -378,6 +385,7 @@ export class PoolScheduler {
     excluded = new Set(),
     signal,
     pinVmId = null,
+    familyVmId = null,
     sessionKey = null,
     ownerScope = PLATFORM_SCOPE,
   } = {}) {
@@ -386,9 +394,11 @@ export class PoolScheduler {
     const summaries = listVms(this.projectRoot)
     const candidates = []
     const pin = pinVmId ? String(pinVmId).trim() : ''
+    const familyVm = familyVmId ? String(familyVmId).trim() : ''
     for (const summary of summaries) {
       if (signal?.aborted) throw makeAbortError()
       if (pin && summary.id !== pin) continue
+      if (!pin && familyVm && summary.id !== familyVm) continue
       const vm = getVm(this.projectRoot, summary.id)
       if (!vm) continue
       if (!pin && platformMismatch(model, vm)) continue
@@ -1029,12 +1039,18 @@ export class PoolScheduler {
     if (book.inflight.size >= limit) return null
     const key = String(sessionKey || '')
     const preferred = key ? book.preferred.get(key) : null
-    let index = Number.isInteger(preferred) ? preferred : null
-    if (index == null) {
-      const taken = new Set([...book.preferred.values(), ...book.inflight.values()])
+    const busy = new Set(book.inflight.values())
+    const ownsBusySeat =
+      Number.isInteger(preferred) &&
+      busy.has(preferred) &&
+      [...book.inflight.keys()].some((hold) => String(hold).startsWith(`live:${key}:`))
+    let index
+    if (Number.isInteger(preferred) && (!busy.has(preferred) || ownsBusySeat)) {
+      index = preferred
+    } else {
       index = 0
-      while (taken.has(index)) index += 1
-      if (index >= limit) index = 0
+      while (busy.has(index)) index += 1
+      if (index >= limit) return null
       if (key) book.preferred.set(key, index)
     }
     const holdKey = `live:${key || 'anon'}:${index}:${Date.now()}:${Math.random().toString(16).slice(2)}`

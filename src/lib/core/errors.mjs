@@ -62,6 +62,7 @@ export const ErrorCode = {
   FABLE_REQUIRES_MAX: 'fable_requires_max',
 
   INCOMPLETE_RESPONSE: 'incomplete_response',
+  CLIENT_CANCELLED: 'client_cancelled',
   // protocol
   PROTOCOL_UNSUPPORTED: 'protocol_unsupported',
   CONVERT_FAILED: 'convert_failed',
@@ -142,25 +143,46 @@ export function makeError({
 }
 
 const GATEWAY_OVERLOAD_CODES = new Set(['server_overloaded', 'account_pool_exhausted', 'api_pool_exhausted'])
-const CLIENT_CANCEL_CODES = new Set([
-  'client_cancelled',
-  'request_cancelled',
-  'client_aborted',
-  'selection_cancelled',
-  'ECONNRESET',
-  'aborted',
-])
+// Cancellation is decided by the request's own AbortSignal, never by transport
+// text: an upstream ECONNRESET or a local timeout is a real failure, not a cancel.
+const CLIENT_CANCEL_CODES = new Set(['client_cancelled', 'request_cancelled', 'client_aborted', 'selection_cancelled'])
 
 export function isClientCancelledCode(code, message = '') {
-  const hay = `${code || ''} ${message || ''}`
   if (CLIENT_CANCEL_CODES.has(String(code || '').trim())) return true
-  return /econnreset|client_aborted|request_cancelled|selection_cancelled|context canceled/i.test(hay)
+  return /client_aborted|request_cancelled|selection_cancelled|context canceled/i.test(`${code || ''} ${message || ''}`)
 }
 
 export function isClientCancelledResult(result = {}) {
+  if (result?.clientCancelled === true || result?.terminalState === 'cancelled') return true
   const code = result?.body?.error?.code || result?.error_code || ''
   const message = result?.body?.error?.message || result?.error_message || ''
   return isClientCancelledCode(code, message)
+}
+
+/**
+ * Client lifecycle terminal: the caller went away. Not an error, not a success.
+ * Keeps committed/usage so billing and the log see what was really delivered.
+ */
+export function clientCancelledResult(result = {}, details = null) {
+  return {
+    ...result,
+    ok: false,
+    status: 499,
+    clientCancelled: true,
+    transportError: false,
+    terminalState: 'cancelled',
+    finalState: 'cancelled',
+    committed: !!result?.committed,
+    body: {
+      type: 'error',
+      error: {
+        type: ErrorType.TIMEOUT,
+        code: ErrorCode.CLIENT_CANCELLED,
+        message: 'Client closed the connection',
+        ...(details && Object.keys(details).length ? { details } : {}),
+      },
+    },
+  }
 }
 
 /** Classify & map Anthropic upstream error body + HTTP status */
@@ -217,9 +239,15 @@ export function isIncompleteAssistantMessage(result = {}) {
 }
 
 export function finalizeAssembledAssistantHop(result = {}) {
+  if (isClientCancelledResult(result)) return result
   if (isCompleteAssistantMessage(result)) return result?.ok ? result : { ...result, ok: true }
   if (isIncompleteAssistantMessage(result) || result?.ok) {
-    return { ...result, ok: false, committed: false, terminalState: 'incomplete' }
+    return {
+      ...result,
+      ok: false,
+      committed: !!result?.committed,
+      terminalState: 'incomplete',
+    }
   }
   return result
 }
@@ -241,7 +269,7 @@ export function incompleteAssistantClientError(result = {}) {
   return {
     ...result,
     ok: false,
-    committed: false,
+    committed: !!result?.committed,
     terminalState: 'incomplete',
     status: 502,
     body: {
