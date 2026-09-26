@@ -385,7 +385,7 @@ export function createPanelHandler(ctx) {
     const vm = exec?.vm || getVm(cfg.paths.project, id)
     if (!exec || !vm) {
       const missing = { reachable: false, status: null, error_code: 'vm_not_found' }
-      return isCodexVm(vm) ? { codex: missing } : { go: missing, rust: missing }
+      return { go: missing, rust: missing }
     }
     if (isCodexVm(vm)) {
       const health = await codexKernelHealth(exec, { timeoutMs: 600 })
