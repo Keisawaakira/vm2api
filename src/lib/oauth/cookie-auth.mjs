@@ -273,8 +273,13 @@ export async function sessionKeyToOAuth(sessionKey, { scope = 'full', proxyUrl =
   }
   try {
     const cred = await spawnCookieHelper({ SCOPE: scope, ...(px ? { PROXY_URL: px } : {}) }, sk)
-    console.log('[import]', cred.source || 'cookie-auth', 'socks5h', redact(cred.access_token || ''))
-    return enrichOauthIdentity(cred, { proxyUrl: px, fetchImpl })
+    const typed = {
+      ...cred,
+      type: cred.type || (scope === 'inference' ? 'setup-token' : 'oauth'),
+      mode: cred.mode || (scope === 'inference' ? 'setup-token' : 'oauth'),
+    }
+    console.log('[import]', typed.source || 'cookie-auth', 'socks5h', redact(typed.access_token || ''))
+    return enrichOauthIdentity(typed, { proxyUrl: px, fetchImpl })
   } catch (e) {
     const err = new Error(publicImportError(e.message || 'session import failed'))
     err.code = e.code || 'cookie_auth_failed'
