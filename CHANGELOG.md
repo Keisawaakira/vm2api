@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- cli-hop 的组织访问权限拒绝不再被改写成空响应：SSE 与非流式 provider error 均恢复为 403，保留原始错误并进入现有 permission-denied 冷却/换号策略。此修复不改变 session 识别或探测占席规则。
+
 ## 1.3.56 — 2026-09-26
 
 - 账号探测会用 Fable 消息确认套餐：当前模型 `claude-fable-5-1` 能通就是 Max，两个 Fable 模型都 403 才是 Pro。429 和传输失败不改等级。
