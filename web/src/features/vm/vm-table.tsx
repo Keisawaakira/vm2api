@@ -7,7 +7,6 @@ import { fmtNum, fmtUsd, usedPctOf } from '@/lib/format'
 import { tierVisual } from '@/lib/tier-visual'
 import { cn } from '@/lib/utils'
 import { isCodexVm, platformLabel, slotNameLabel } from '@/lib/vm-kind'
-import { OpenaiQuotaActions } from '@/features/vm/openai-quota-actions'
 import {
   claudeTier,
   credentialStatus,
@@ -29,6 +28,7 @@ import {
 } from '@/components/platform-chip'
 import { StatusMark } from '@/components/status-mark'
 import { ProxyChip } from '@/features/proxies/proxy-chip'
+import { OpenaiQuotaActions } from '@/features/vm/openai-quota-actions'
 import {
   SchedulableSwitch,
   vmSchedulableProps,

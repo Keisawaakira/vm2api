@@ -546,49 +546,49 @@ export function VmTable({
                     <OpenaiQuotaActions vm={vm} compact />
                   ) : null}
                   <div className='flex items-center gap-0.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100'>
-                  {onClearCooldown && clearableTitle(vm) ? (
-                    <Button
-                      size='sm'
-                      variant='ghost'
-                      title={clearableTitle(vm) || undefined}
-                      className='h-8 px-2 text-sm text-muted-foreground'
-                      data-row-actions
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onClearCooldown(vm)
-                      }}
-                    >
-                      清冷却
-                    </Button>
-                  ) : null}
-                  {onReset ? (
-                    <Button
-                      size='sm'
-                      variant='ghost'
-                      className='h-8 px-2 text-sm text-muted-foreground'
-                      data-row-actions
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onReset(vm)
-                      }}
-                    >
-                      重置
-                    </Button>
-                  ) : null}
-                  {onDelete ? (
-                    <Button
-                      size='sm'
-                      variant='ghost'
-                      className='h-8 px-2 text-sm text-destructive'
-                      data-row-actions
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onDelete(vm)
-                      }}
-                    >
-                      删除
-                    </Button>
-                  ) : null}
+                    {onClearCooldown && clearableTitle(vm) ? (
+                      <Button
+                        size='sm'
+                        variant='ghost'
+                        title={clearableTitle(vm) || undefined}
+                        className='h-8 px-2 text-sm text-muted-foreground'
+                        data-row-actions
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onClearCooldown(vm)
+                        }}
+                      >
+                        清冷却
+                      </Button>
+                    ) : null}
+                    {onReset ? (
+                      <Button
+                        size='sm'
+                        variant='ghost'
+                        className='h-8 px-2 text-sm text-muted-foreground'
+                        data-row-actions
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onReset(vm)
+                        }}
+                      >
+                        重置
+                      </Button>
+                    ) : null}
+                    {onDelete ? (
+                      <Button
+                        size='sm'
+                        variant='ghost'
+                        className='h-8 px-2 text-sm text-destructive'
+                        data-row-actions
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onDelete(vm)
+                        }}
+                      >
+                        删除
+                      </Button>
+                    ) : null}
                   </div>
                 </div>
               </div>

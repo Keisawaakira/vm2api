@@ -343,6 +343,53 @@ unixTest('streamGoWorker does not turn a generic stream error into HTTP 502', as
   }
 })
 
+unixTest('streamGoWorker preserves organization permission denial before downstream commit', async () => {
+  const message =
+    'provider error: provider error: Your organization does not have access to Claude. Please login again or contact your administrator.'
+  const fx = await fixture((req, res) => {
+    res.setHeader('content-type', 'text/event-stream')
+    res.setHeader('trailer', 'x-kin-terminal-state')
+    res.write(`event: error\ndata: ${JSON.stringify({ type: 'error', error: { type: 'api_error', message } })}\n\n`)
+    res.addTrailers({ 'x-kin-terminal-state': 'incomplete' })
+    res.end()
+  })
+  try {
+    const result = await streamGoWorker({
+      exec: fx.exec,
+      body: { model: 'claude-haiku-4-5', stream: true, messages: [{ role: 'user', content: 'hi' }] },
+      onCommit: () => assert.fail('permission denial must not commit the downstream'),
+      onEvent: () => {},
+    })
+    assert.equal(result.status, 403)
+    assert.equal(result.body.error.message, message)
+    assert.equal(result.terminalState, 'rejected')
+    assert.equal(result.committed, false)
+  } finally {
+    await fx.close()
+  }
+})
+
+unixTest('callGoWorker restores organization permission denial from a kernel provider error', async () => {
+  const message =
+    'provider error: Your organization does not have access to Claude. Please login again or contact your administrator.'
+  const fx = await fixture((req, res) => {
+    res.statusCode = 502
+    res.setHeader('content-type', 'application/json')
+    res.end(JSON.stringify({ type: 'error', error: { type: 'worker_error', code: 'provider_error', message } }))
+  })
+  try {
+    const result = await callGoWorker({
+      exec: fx.exec,
+      body: { model: 'claude-haiku-4-5', messages: [{ role: 'user', content: 'hi' }] },
+    })
+    assert.equal(result.status, 403)
+    assert.equal(result.body.error.message, message)
+    assert.equal(result.terminalState, 'rejected')
+  } finally {
+    await fx.close()
+  }
+})
+
 unixTest('callGoWorker restores a kernel 502 provider_error plan limit to 429', async () => {
   const fx = await fixture((req, res) => {
     res.statusCode = 502

@@ -24,7 +24,10 @@ test('string and header parent ids stay on one family and do not cross API keys'
     },
   }
   assert.equal(explicitParentSessionId(child, {}), 'parent-sess')
-  assert.equal(explicitParentSessionId({ metadata: { user_id: { device_id: 'same-device', session_id: 'other' } } }, {}), '')
+  assert.equal(
+    explicitParentSessionId({ metadata: { user_id: { device_id: 'same-device', session_id: 'other' } } }, {}),
+    '',
+  )
   assert.equal(explicitParentSessionId({}, { 'x-kin-root-session': 'root-sess' }), 'root-sess')
   const familyA = r.familyKey(req, 'parent-sess', 'anthropic')
   const familyB = r.familyKey(other, 'parent-sess', 'anthropic')
@@ -41,10 +44,7 @@ test('string and header parent ids stay on one family and do not cross API keys'
 test('a declared child without parent or root is rejected as a relation', () => {
   assert.equal(childDeclaredWithoutParent({ metadata: { kin_child: true } }, {}), true)
   assert.equal(
-    childDeclaredWithoutParent(
-      { metadata: { kin_child: true, parent_session_id: 'parent-sess' } },
-      {},
-    ),
+    childDeclaredWithoutParent({ metadata: { kin_child: true, parent_session_id: 'parent-sess' } }, {}),
     false,
   )
   assert.equal(childDeclaredWithoutParent({ metadata: { user_id: { device_id: 'dev' } } }, {}), false)
@@ -475,6 +475,171 @@ test('extractKey isolates the same session per API key', () => {
   const raw = { headers: { 'x-session-id': 'same-session' } }
   assert.equal(r.extractKey(raw, {}), 'same-session')
   assert.equal(r.extractKey({ ...raw, apiKeyRecord: { id: 7 } }, {}), 'k7:same-session')
+})
+
+test('canonical identity keys are not scoped to API keys', () => {
+  const r = new StickyRouter({ dataDir: tmpDir(), config: { sticky: { enabled: true } } })
+  const reqA = { apiKeyRecord: { id: 'key-a' } }
+  const reqB = { apiKeyRecord: { id: 'key-b' } }
+
+  assert.equal(r.canonicalSessionKey('session-1'), 'sess:session-1')
+  assert.equal(r.canonicalDeviceKey('device-1'), 'dev2:device-1')
+  assert.equal(r.canonicalSessionKey('session-1'), r.canonicalSessionKey('session-1', reqA))
+  assert.equal(r.canonicalSessionKey('session-1', reqA), r.canonicalSessionKey('session-1', reqB))
+  assert.equal(r.canonicalDeviceKey('device-1'), r.canonicalDeviceKey('device-1', reqA))
+  assert.equal(r.canonicalDeviceKey('device-1', reqA), r.canonicalDeviceKey('device-1', reqB))
+  assert.doesNotMatch(r.canonicalSessionKey('session-1', reqA), /key-a|key-b|^k/)
+  assert.doesNotMatch(r.canonicalDeviceKey('device-1', reqA), /key-a|key-b|^k/)
+  assert.notEqual(r.canonicalSessionKey('session-1'), r.canonicalSessionKey('session-2'))
+  assert.notEqual(r.canonicalDeviceKey('device-1'), r.canonicalDeviceKey('device-2'))
+  assert.equal(r.canonicalSessionKey(''), null)
+  assert.equal(r.canonicalDeviceKey(''), null)
+})
+
+test('canonical identity keys ignore account_uuid changes', () => {
+  const r = new StickyRouter({ dataDir: tmpDir(), config: { sticky: { enabled: true } } })
+  const first = { device_id: 'device-same', account_uuid: 'account-a', session_id: 'session-same' }
+  const second = { device_id: 'device-same', account_uuid: 'account-b', session_id: 'session-same' }
+
+  assert.equal(r.canonicalSessionKey(first.session_id), r.canonicalSessionKey(second.session_id))
+  assert.equal(r.canonicalDeviceKey(first.device_id), r.canonicalDeviceKey(second.device_id))
+})
+
+test('device affinity bind carries no session seat and can move to another VM', () => {
+  const r = new StickyRouter({ dataDir: tmpDir(), config: { sticky: { enabled: true, ttl_seconds: 60 } } })
+  const key = r.canonicalDeviceKey('device-affinity')
+  const first = r.bindDeviceAffinity(key, { accountId: 'acc-1', vmId: 'vm-01' })
+  assert.equal(first.generation, 1)
+  let hit = r.resolve(key)
+  assert.equal(hit.accountId, 'acc-1')
+  assert.equal(hit.vmId, 'vm-01')
+  assert.equal(hit.sessionId, null)
+  assert.equal(hit.slotIndex, null)
+  assert.equal(r.stats().sessions[key].hits, 0)
+
+  const moved = r.bindDeviceAffinity(key, { accountId: 'acc-2', vmId: 'vm-02' })
+  assert.equal(moved.generation, 2)
+  hit = r.resolve(key)
+  assert.equal(hit.accountId, 'acc-2')
+  assert.equal(hit.vmId, 'vm-02')
+  assert.equal(hit.sessionId, null)
+  assert.equal(hit.slotIndex, null)
+})
+
+test('migrateLegacyIdentity lazily writes canonical keys on a legacy hit', () => {
+  const r = new StickyRouter({ dataDir: tmpDir(), config: { sticky: { enabled: true, ttl_seconds: 60 } } })
+  const req = { apiKeyRecord: { id: 'key_legacy' }, headers: {} }
+  const legacyKey = r.isolateKey('legacy-session', req)
+  r.bind(legacyKey, { accountId: 'acc-legacy', vmId: 'vm-legacy', sessionId: 'out-legacy' })
+
+  const result = r.migrateLegacyIdentity(legacyKey, { sessionId: 'legacy-session', deviceId: 'device-legacy' })
+  assert.equal(result.sessionKey, 'sess:legacy-session')
+  assert.equal(result.deviceKey, 'dev2:device-legacy')
+
+  // Canonical keys carry no API key.
+  assert.doesNotMatch(result.sessionKey, /key_legacy|^k/)
+  assert.doesNotMatch(result.deviceKey, /key_legacy|^k/)
+
+  const sessionHit = r.resolve(result.sessionKey)
+  assert.equal(sessionHit.accountId, 'acc-legacy')
+  assert.equal(sessionHit.vmId, 'vm-legacy')
+  const deviceHit = r.resolve(result.deviceKey)
+  assert.equal(deviceHit.accountId, 'acc-legacy')
+  assert.equal(deviceHit.vmId, 'vm-legacy')
+
+  // The legacy row itself is untouched, still readable.
+  const legacyHit = r.resolve(legacyKey)
+  assert.equal(legacyHit.accountId, 'acc-legacy')
+  assert.equal(legacyHit.vmId, 'vm-legacy')
+})
+
+test('migrateLegacyIdentity does not overwrite an existing canonical session binding on conflict', () => {
+  const r = new StickyRouter({ dataDir: tmpDir(), config: { sticky: { enabled: true, ttl_seconds: 60 } } })
+  const req = { apiKeyRecord: { id: 'key_conflict' }, headers: {} }
+  const sessionKey = r.canonicalSessionKey('conflict-session')
+  // A prior request already bound the canonical session key to vm-a.
+  r.bind(sessionKey, { accountId: 'acc-a', vmId: 'vm-a' })
+
+  // A stale legacy row for the same logical session points at a different VM.
+  const legacyKey = r.isolateKey('conflict-session', req)
+  r.bind(legacyKey, { accountId: 'acc-b', vmId: 'vm-b' })
+
+  const result = r.migrateLegacyIdentity(legacyKey, { sessionId: 'conflict-session', deviceId: 'device-conflict' })
+  assert.equal(result.sessionKey, sessionKey)
+
+  // bind()'s locked semantics keep the already-bound VM; the legacy hit does not
+  // silently move or merge the canonical session onto vm-b.
+  const hit = r.resolve(sessionKey)
+  assert.equal(hit.vmId, 'vm-a')
+  assert.equal(hit.accountId, 'acc-a')
+
+  // The legacy row itself is left exactly as it was (no cleanup, no rewrite).
+  const legacyHit = r.resolve(legacyKey)
+  assert.equal(legacyHit.vmId, 'vm-b')
+  assert.equal(legacyHit.accountId, 'acc-b')
+})
+
+test('migrateLegacyIdentity is a no-op without a resolvable legacy hit and deletes nothing', () => {
+  const r = new StickyRouter({ dataDir: tmpDir(), config: { sticky: { enabled: true, ttl_seconds: 60 } } })
+  r.bind('unrelated-conv', { accountId: 'acc-unrelated', vmId: 'vm-unrelated' })
+  const before = r.stats().active_sessions
+
+  const missing = r.migrateLegacyIdentity('never-bound-legacy-key', {
+    sessionId: 'orphan-session',
+    deviceId: 'orphan-device',
+  })
+  assert.equal(missing.sessionKey, null)
+  assert.equal(missing.deviceKey, null)
+  assert.equal(r.resolve('sess:orphan-session'), null)
+  assert.equal(r.resolve('dev2:orphan-device'), null)
+
+  // No canonical keys were minted, and the unrelated row is untouched.
+  assert.equal(r.stats().active_sessions, before)
+  assert.equal(r.resolve('unrelated-conv').vmId, 'vm-unrelated')
+})
+
+test('migrateLegacyIdentity without a trusted device/session identity mints nothing', () => {
+  const r = new StickyRouter({ dataDir: tmpDir(), config: { sticky: { enabled: true, ttl_seconds: 60 } } })
+  const req = { apiKeyRecord: { id: 'key_notrust' }, headers: {} }
+  const legacyKey = r.isolateKey('untrusted-session', req)
+  r.bind(legacyKey, { accountId: 'acc-untrusted', vmId: 'vm-untrusted' })
+
+  const result = r.migrateLegacyIdentity(legacyKey, {})
+  assert.equal(result.sessionKey, null)
+  assert.equal(result.deviceKey, null)
+})
+
+test('migrateLegacyIdentity keeps a live device home VM', () => {
+  const r = new StickyRouter({ dataDir: tmpDir(), config: { sticky: { enabled: true, ttl_seconds: 60 } } })
+  const req = { apiKeyRecord: { id: 'key_home' }, headers: {} }
+  r.bindDeviceAffinity(r.canonicalDeviceKey('device-home'), { accountId: 'acc-home', vmId: 'vm-home' })
+  const legacyKey = r.isolateKey('old-session', req)
+  r.bind(legacyKey, { accountId: 'acc-old', vmId: 'vm-old' })
+
+  r.migrateLegacyIdentity(legacyKey, { sessionId: 'old-session', deviceId: 'device-home' })
+  assert.equal(r.resolve('sess:old-session').vmId, 'vm-old')
+  assert.equal(r.resolve('dev2:device-home').vmId, 'vm-home')
+})
+
+test('sessionPoolKeys uses one canonical key across API keys and keeps legacy aliases', () => {
+  const r = new StickyRouter({ dataDir: tmpDir(), config: { sticky: { enabled: true, ttl_seconds: 60 } } })
+  const body = { metadata: { user_id: JSON.stringify({ device_id: 'dev-s', session_id: 'sess-s' }) } }
+  const reqA = { apiKeyRecord: { id: 'a' }, headers: {} }
+  const reqB = { apiKeyRecord: { id: 'b' }, headers: {} }
+  const legacy = r.extractPoolKey(reqA, body, { platform: 'anthropic' })
+  r.bind(legacy, { accountId: 'acc-s', vmId: 'vm-s' })
+
+  const peek = r.sessionPoolKeys(reqA, body, { sessionId: 'sess-s', deviceId: 'dev-s', migrate: false })
+  assert.deepEqual(peek, { stickyKey: legacy, stickyKeys: [legacy] })
+  assert.equal(r.resolve('sess:sess-s'), null)
+
+  const a = r.sessionPoolKeys(reqA, body, { sessionId: 'sess-s', deviceId: 'dev-s' })
+  assert.deepEqual(a, { stickyKey: 'sess:sess-s', stickyKeys: ['sess:sess-s', legacy] })
+  assert.equal(r.resolve('sess:sess-s').vmId, 'vm-s')
+  const b = r.sessionPoolKeys(reqB, body, { sessionId: 'sess-s', deviceId: 'dev-s' })
+  assert.deepEqual(b, { stickyKey: 'sess:sess-s', stickyKeys: ['sess:sess-s'] })
+  assert.equal(r.familyPoolKey(reqA, 'sess-s', { trusted: true }), r.familyPoolKey(reqB, 'sess-s', { trusted: true }))
+  assert.match(r.familyPoolKey(reqA, 'sess-s'), /ka:family:sess-s$/)
 })
 
 test('unbind and unbindByAccount drop dead bindings', () => {

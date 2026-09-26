@@ -248,6 +248,9 @@ export function usageFromSseEvent(event) {
 
 const AUTH_ERROR_TEXT =
   /authentication_error|token has been revoked|oauth_revoked|invalid_grant|invalid (?:bearer|x-api-key)|OAuth token has expired/i
+// cli-hop can flatten an organization permission denial into generic api_error.
+// Preserve the denial instead of replacing it with an empty-hop error.
+const PERMISSION_ERROR_TEXT = /organization does not have access to claude/i
 
 /**
  * The kernel cli-hop answers 200 and then streams `event: error` (sub2api
@@ -260,21 +263,21 @@ export function semanticStatusForStreamError(errorBody) {
   if (type === 'rate_limit_error' || isPlanLimitMessage(message)) return 429
   if (type === 'overloaded_error') return 529
   if (type === 'authentication_error' || AUTH_ERROR_TEXT.test(message)) return 401
-  if (type === 'permission_error') return 403
+  if (type === 'permission_error' || PERMISSION_ERROR_TEXT.test(message)) return 403
   if (type === 'invalid_request_error') return 400
   return 502
 }
 
 /**
  * Kernel `map_kernel` folds every provider failure into 502 `provider_error`.
- * A plan limit / overload inside that text is the upstream 429 / 529.
+ * Restore recognized permission denials and plan-limit / overload statuses.
  */
 export function restoreKernelErrorStatus(result = {}, { now = Date.now() } = {}) {
   if (!result || result.ok || Number(result.status) !== 502) return result
   const body = result.body
   if (!(body?.type === 'error' || body?.error)) return result
   const status = semanticStatusForStreamError(body)
-  if (status !== 429 && status !== 529) return result
+  if (status !== 403 && status !== 429 && status !== 529) return result
   const headers =
     status === 429
       ? extraHeadersFromLimitError(String(body?.error?.message || ''), result.headers || {}, now)
