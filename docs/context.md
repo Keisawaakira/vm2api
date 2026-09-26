@@ -2,6 +2,12 @@
 
 2026-09-26 (UTC+08). User supplied CC/Crag r3 captures and conditionally authorized promotion only if comparison passes. Also reports a500 on opening a VM's Account tab. Main agent only; no running-slot changes, real-provider requests, push or deployment.
 
+## Credential exchange hotfix (2026-09-26)
+- User reports `Assignment to constant variable` when exchanging a login credential. In test e248b33 and upstream d9f31c8, the Claude `POST /api/panel/vms/:id/oauth/exchange-code` route declares `const oauth` then reassigns it after identity enrichment. This is a backend exchange failure, separate from the already-fixed React Account-tab500.
+- Fixed only the route binding from const to let, preserving identity enrichment. The actual-router tests run the existing fake exchange/session helpers and real enrichment with an in-memory HTTP boundary; credential persistence/runtime activation is captured at the existing commit seam, not executed against a slot.
+- Nine route checks observed6 failures with the exact reported error and3 preserved rejection controls before the fix, then9/9 pass. Related OAuth/identity/auth/ACL checks70/70 pass (including those9). Full OAuth/Claude Code/Setup Token retain tokens, type, auth scheme and identity; failed bootstrap can still commit its grant, while expired-session, proxy, ACL and persistence failures retain their normal behavior. Successful sessions are consumed once and responses do not expose tokens.
+- Evidence: C:/Users/zemingxi/AppData/Local/Temp/vm2api-oauth-const-20260926/. No frontend/native/config changes, full-suite run, real credentials, external calls, service startup, push or deployment. Authorization-code users should obtain a fresh session/code after updating: the previous exchange may have consumed it before this assignment exception.
+
 ## Current rebase: v1.3.59 (2026-09-26)
 - Rebased test8d4d563 onto origin/main d9f31c8. Backup: backup/test-before-main159-20260926-2120. Five local commits replayed as4ad8172 /2a9b9e9 /fe04de1 /bb42b48 /8a72000.
 - One import conflict in usage-logs-repo: retained both the new window helpers and existing cacheCreationUsage. Upstream adds aligned billing windows, Extra calibration and OAuth identity/type handling. Fixed/candidate/native assets, caller/Chat safety, raw access controls, account-tab repair, closed round and Docker inputs remain unchanged.
