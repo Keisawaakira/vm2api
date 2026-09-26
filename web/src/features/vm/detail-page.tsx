@@ -255,7 +255,11 @@ export function VmDetailPage() {
     acc.today_cache_creation_tokens ?? vm.today_cache_creation_tokens ?? 0
   )
   const todayInput = Number(
-    acc.today_input_tokens ?? vm.today_input_tokens ?? acc.tokens_in ?? vm.tokens_in ?? 0
+    acc.today_input_tokens ??
+      vm.today_input_tokens ??
+      acc.tokens_in ??
+      vm.tokens_in ??
+      0
   )
   const todayHit = cacheHitPct(
     todayInput,

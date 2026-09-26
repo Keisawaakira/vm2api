@@ -173,10 +173,7 @@ test('parseLimitResetFromMessage follows DST in the named zone', () => {
 
 test('extraWindowSince uses reset minus duration, elapsed reset, or null', () => {
   const now = Date.parse('2026-09-26T12:00:00.000Z')
-  assert.equal(
-    extraWindowSince('2026-09-26T16:00:00.000Z', WINDOW_5H_MS, now),
-    Date.parse('2026-09-26T11:00:00.000Z'),
-  )
+  assert.equal(extraWindowSince('2026-09-26T16:00:00.000Z', WINDOW_5H_MS, now), Date.parse('2026-09-26T11:00:00.000Z'))
   assert.equal(extraWindowSince('2026-09-26T10:00:00.000Z', WINDOW_5H_MS, now), Date.parse('2026-09-26T10:00:00.000Z'))
   assert.equal(extraWindowSince(null, WINDOW_5H_MS, now), null)
 })

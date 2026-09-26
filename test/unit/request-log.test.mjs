@@ -258,9 +258,7 @@ test('billingStats Extra window excludes older logs outside reset-5h', () => {
     account_id: 'acc-1',
     usage: { input_tokens: 1_000_000, output_tokens: 0 },
   })
-  store.repo.db
-    .prepare('UPDATE usage_logs SET created_at = ? WHERE vm_id = ?')
-    .run('2026-09-26T08:00:00.000Z', 'vm-01')
+  store.repo.db.prepare('UPDATE usage_logs SET created_at = ? WHERE vm_id = ?').run('2026-09-26T08:00:00.000Z', 'vm-01')
   const ctxNew = store.start(
     { method: 'POST', headers: {}, socket: {} },
     { protocol: 'anthropic.messages', pathName: '/v1/messages' },
@@ -274,7 +272,9 @@ test('billingStats Extra window excludes older logs outside reset-5h', () => {
     usage: { input_tokens: 200_000, output_tokens: 0 },
   })
   store.repo.db
-    .prepare("UPDATE usage_logs SET created_at = '2026-09-26T11:30:00.000Z' WHERE created_at > '2026-09-26T10:00:00.000Z'")
+    .prepare(
+      "UPDATE usage_logs SET created_at = '2026-09-26T11:30:00.000Z' WHERE created_at > '2026-09-26T10:00:00.000Z'",
+    )
     .run()
   const reset5h = '2026-09-26T16:00:00.000Z'
   const bill = store.billingStats({

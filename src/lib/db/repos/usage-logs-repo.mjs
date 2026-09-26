@@ -17,7 +17,13 @@ import {
   ingressAuthSql,
   slaOkErrorSqlList,
 } from '../../admin/error-class.mjs'
-import { calculateCost, emptyCostBucket, shanghaiDayStartIso, sumCostBuckets, UNPRICED_MODEL } from '../../admin/pricing.mjs'
+import {
+  calculateCost,
+  emptyCostBucket,
+  shanghaiDayStartIso,
+  sumCostBuckets,
+  UNPRICED_MODEL,
+} from '../../admin/pricing.mjs'
 import { cacheHitStats } from '../../admin/cache-metrics.mjs'
 import { extraWindowSince, WINDOW_5H_MS, WINDOW_7D_MS } from '../../pool/quota-window.mjs'
 
@@ -687,22 +693,14 @@ export class UsageLogsRepo {
     const todayById = new Map(accountsToday.map((a) => [keyOf(a), a]))
     const aligned = Array.isArray(accountWindows) && accountWindows.length > 0
     const events = aligned ? this._costEventsSince(sevenDStart) : null
-    const fiveById = aligned
-      ? null
-      : new Map(this.costByAccount({ since: fiveHStart }).map((a) => [keyOf(a), a]))
-    const sevenById = aligned
-      ? null
-      : new Map(this.costByAccount({ since: sevenDStart }).map((a) => [keyOf(a), a]))
+    const fiveById = aligned ? null : new Map(this.costByAccount({ since: fiveHStart }).map((a) => [keyOf(a), a]))
+    const sevenById = aligned ? null : new Map(this.costByAccount({ since: sevenDStart }).map((a) => [keyOf(a), a]))
     const eventsByKey = aligned ? groupCostEvents(events) : null
     const accounts = accountsTotal.map((a) => {
       const t = todayById.get(keyOf(a)) || emptyCostBucket()
       const win = aligned ? resolveAccountWindow(accountWindows, a) : null
-      const since5 = aligned
-        ? extraWindowSince(win?.reset_5h, WINDOW_5H_MS, now) ?? Date.parse(fiveHStart)
-        : null
-      const since7 = aligned
-        ? extraWindowSince(win?.reset_7d, WINDOW_7D_MS, now) ?? Date.parse(sevenDStart)
-        : null
+      const since5 = aligned ? (extraWindowSince(win?.reset_5h, WINDOW_5H_MS, now) ?? Date.parse(fiveHStart)) : null
+      const since7 = aligned ? (extraWindowSince(win?.reset_7d, WINDOW_7D_MS, now) ?? Date.parse(sevenDStart)) : null
       const w = aligned
         ? bucketEventsSince(eventsByKey.get(keyOf(a)) || [], since5)
         : fiveById.get(keyOf(a)) || emptyCostBucket()
@@ -743,10 +741,16 @@ export class UsageLogsRepo {
       }
     })
     const window5h = aligned
-      ? { ...sumCostBuckets(accounts.map((a) => a.window_5h)), ...cacheHitStats(sumCostBuckets(accounts.map((a) => a.window_5h))) }
+      ? {
+          ...sumCostBuckets(accounts.map((a) => a.window_5h)),
+          ...cacheHitStats(sumCostBuckets(accounts.map((a) => a.window_5h))),
+        }
       : this._costSelect('WHERE created_at >= ?', [fiveHStart])
     const window7d = aligned
-      ? { ...sumCostBuckets(accounts.map((a) => a.window_7d)), ...cacheHitStats(sumCostBuckets(accounts.map((a) => a.window_7d))) }
+      ? {
+          ...sumCostBuckets(accounts.map((a) => a.window_7d)),
+          ...cacheHitStats(sumCostBuckets(accounts.map((a) => a.window_7d))),
+        }
       : this._costSelect('WHERE created_at >= ?', [sevenDStart])
     return {
       source: 'anthropic-official',
