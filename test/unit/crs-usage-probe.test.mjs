@@ -98,7 +98,13 @@ test('fable 429 is isolated weekly limit, not account ban', () => {
 })
 
 test('fable attempts: 200 is Max, 403-only is Pro, 429 does not classify', () => {
-  assert.equal(tierFromFableAttempts([{ ok: false, plan_denied: true, status: 403, model: 'claude-fable-5-1' }, { ok: true, status: 200, model: 'claude-fable-5' }]).tier, 'max')
+  assert.equal(
+    tierFromFableAttempts([
+      { ok: false, plan_denied: true, status: 403, model: 'claude-fable-5-1' },
+      { ok: true, status: 200, model: 'claude-fable-5' },
+    ]).tier,
+    'max',
+  )
   assert.equal(
     tierFromFableAttempts([
       { ok: false, plan_denied: true, status: 403, model: 'claude-fable-5-1' },

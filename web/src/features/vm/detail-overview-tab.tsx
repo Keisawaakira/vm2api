@@ -14,8 +14,8 @@ import type {
 } from '@/lib/fable-status'
 import { fmtNum, fmtUsd } from '@/lib/format'
 import { isCodexVm } from '@/lib/vm-kind'
-import { TabsContent } from '@/components/ui/tabs'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { TabsContent } from '@/components/ui/tabs'
 import { VmCostByModel } from '@/features/vm/detail-cost-by-model'
 import { VmStatusBoard } from '@/features/vm/detail-status-board'
 import { VmEngineEditor } from '@/features/vm/engine-editor'
@@ -40,7 +40,10 @@ type VmOverviewTabProps = {
   billing?: Record<string, unknown> | null
 }
 
-function periodOf(billing: Record<string, unknown> | null | undefined, key: string) {
+function periodOf(
+  billing: Record<string, unknown> | null | undefined,
+  key: string
+) {
   const row = billing?.[key]
   if (!row || typeof row !== 'object') return null
   const src = row as Record<string, unknown>
