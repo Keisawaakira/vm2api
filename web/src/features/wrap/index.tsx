@@ -3,13 +3,16 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { VIEW_TITLES } from '@/config/nav'
 import type { Vm } from '@/types/panel-vm'
+import type { StatusTone } from '@/types/status'
 import { toast } from 'sonner'
 import { fmtBytes } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { isCodexVm } from '@/lib/vm-kind'
+import { wrapSyncKernelFails } from '@/lib/wrap-health'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
+import { CircularProgress } from '@/components/ui/circular-progress'
 import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
@@ -20,17 +23,31 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { EmptyState } from '@/components/empty-state'
 import { PageHeader } from '@/components/page-header'
 import { CardGridSkeleton } from '@/components/page-skeletons'
 import { QueryGate } from '@/components/query-gate'
+import { StatusMark } from '@/components/status-mark'
 import { dashboardQueryOptions } from '@/features/overview/queries'
 import { dataplaneLabel } from '@/features/vm/dataplane-contract'
 import {
   inferenceEngineLabel,
   normalizeInferenceEngine,
 } from '@/features/vm/engine-contract'
+import {
+  KernelPipeline,
+  type Station,
+  type StationId,
+} from '@/features/wrap/kernel-pipeline'
 import {
   installReleaseKernel,
   makeWrapSample,
@@ -41,10 +58,14 @@ import {
   uploadKernelBinary,
   wrapSampleQueryOptions,
   type WrapKernelPayload,
+  type WrapSample,
   type WrapSyncReport,
 } from '@/features/wrap/queries'
 
 const MAX_KERNEL_UPLOAD_BYTES = 32 * 1024 * 1024
+
+const TONE_OK: StatusTone = { key: 'ok', cls: 'ok', text: '就绪' }
+const TONE_NONE: StatusTone = { key: 'none', cls: 'none', text: '未知' }
 
 function sampleDirLabel(dir?: string) {
   if (!dir) return 'share/wrap-cli'
@@ -155,6 +176,56 @@ function slotSyncFailed(report: WrapSyncReport, id: string) {
   return item.kernel?.ok === false
 }
 
+function mergeSyncReports(
+  prev: WrapSyncReport | null,
+  next: WrapSyncReport
+): WrapSyncReport {
+  const map = new Map<string, NonNullable<WrapSyncReport['items']>[number]>()
+  for (const item of prev?.items || []) {
+    if (item?.id) map.set(item.id, item)
+  }
+  for (const item of next.items || []) {
+    if (item?.id) map.set(item.id, item)
+  }
+  const items = Array.from(map.values())
+  const okCount = items.filter(
+    (item) => item?.ok !== false && item?.kernel?.ok !== false
+  ).length
+  return {
+    ...prev,
+    ...next,
+    items,
+    total: Math.max(next.total ?? 0, prev?.total ?? 0, items.length),
+    ok_count: okCount,
+    failed_count: items.filter(
+      (item) => item?.ok === false || item?.kernel?.ok === false
+    ).length,
+  }
+}
+
+/** 上一次同步里这台槽的结果。没跑过同步就没有状态，不假装成功。 */
+function slotSyncTone(
+  item?: NonNullable<WrapSyncReport['items']>[number]
+): StatusTone | null {
+  if (!item) return null
+  if (item.ok === false)
+    return { key: 'bad', cls: 'bad', text: item.error || '同步失败' }
+  if (item.kernel?.ok === false)
+    return { key: 'warn', cls: 'warn', text: '文件已写，进程未起' }
+  if (item.kernel?.skipped)
+    return { key: 'off', cls: 'off', text: '已写文件（未重启）' }
+  return { key: 'ok', cls: 'ok', text: '已重装' }
+}
+
+function Row({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className='flex items-center justify-between gap-2 text-sm'>
+      <span className='text-muted-foreground'>{label}</span>
+      {children}
+    </div>
+  )
+}
+
 function HopProgress({ job }: { job: HopJob }) {
   const label =
     job.phase === 'download'
@@ -188,12 +259,15 @@ function HopProgress({ job }: { job: HopJob }) {
 
 function Flag({ ok, label }: { ok?: boolean; label: string }) {
   return (
-    <div className='flex items-center justify-between gap-2 text-sm'>
-      <span className='text-muted-foreground'>{label}</span>
-      <span className={ok ? 'text-foreground' : 'text-destructive'}>
-        {ok ? '有' : '缺'}
-      </span>
-    </div>
+    <Row label={label}>
+      <StatusMark
+        tone={
+          ok
+            ? { key: 'ok', cls: 'ok', text: '有' }
+            : { key: 'bad', cls: 'bad', text: '缺' }
+        }
+      />
+    </Row>
   )
 }
 
@@ -216,33 +290,85 @@ function KernelPayload({
           : '未找到 kernel'
   return (
     <div className='space-y-2 text-sm'>
-      <div className='flex items-center justify-between gap-2'>
-        <span className='text-muted-foreground'>来源</span>
+      <Row label='来源'>
         <span className='font-medium'>{label}</span>
-      </div>
-      <div className='flex items-center justify-between gap-2'>
-        <span className='text-muted-foreground'>文件</span>
+      </Row>
+      <Row label='文件'>
         <code className='text-xs'>{kernelPathLabel(payload?.path)}</code>
-      </div>
-      <div className='flex items-center justify-between gap-2'>
-        <span className='text-muted-foreground'>大小</span>
+      </Row>
+      <Row label='大小'>
         <span className='font-mono text-xs'>
           {payload?.size ? fmtBytes(payload.size) : '—'}
         </span>
-      </div>
-      <div className='flex items-center justify-between gap-2'>
-        <span className='text-muted-foreground'>mtime</span>
+      </Row>
+      <Row label='mtime'>
         <span className='font-mono text-xs'>{payload?.mtime || '—'}</span>
-      </div>
+      </Row>
     </div>
   )
+}
+
+function buildStations(
+  data: WrapSample | undefined,
+  slots: number,
+  synced: number
+): Station[] {
+  const kernelSource = data?.kernel?.source
+  const sampleOk = !!(data?.kernel_bin && data?.wrapper)
+  const repoPayloads = [data?.kernel, data?.cli_node, data?.cc_node, data?.crag]
+  const repoReady = repoPayloads.some((payload) => Boolean(payload?.size))
+  return [
+    {
+      id: 'image',
+      label: '镜像',
+      caption: 'bin/ · share/wrap-cli',
+      tone: { key: 'ok', cls: 'ok', text: '入口写入' },
+    },
+    {
+      id: 'repo',
+      label: '仓内二进制',
+      caption: kernelPathLabel(data?.kernel?.path || data?.cli_node?.path),
+      tone:
+        kernelSource === 'missing' || (!kernelSource && !repoReady)
+          ? { key: 'bad', cls: 'bad', text: '缺二进制' }
+          : kernelSource === 'sample'
+            ? { key: 'warn', cls: 'warn', text: '回落母样本' }
+            : TONE_OK,
+    },
+    {
+      id: 'sample',
+      label: '母样本',
+      caption: sampleDirLabel(data?.dir),
+      tone: data?.ok
+        ? TONE_OK
+        : sampleOk
+          ? { key: 'warn', cls: 'warn', text: '缺 shim' }
+          : { key: 'bad', cls: 'bad', text: '不完整' },
+    },
+    {
+      id: 'slots',
+      label: '槽内 CLI',
+      caption: slots ? `${slots} 个槽位` : '还没有槽位',
+      tone: !slots
+        ? { key: 'none', cls: 'none', text: '无槽位' }
+        : synced === 0
+          ? TONE_NONE
+          : synced >= slots
+            ? { key: 'ok', cls: 'ok', text: '本次全部重装' }
+            : {
+                key: 'caution',
+                cls: 'caution',
+                text: `本次 ${synced}/${slots}`,
+              },
+    },
+  ]
 }
 
 export function WrapSamplePage() {
   const qc = useQueryClient()
   const sample = useQuery(wrapSampleQueryOptions())
   const dash = useQuery(dashboardQueryOptions())
-  const vms: Vm[] = dash.data?.vms || []
+  const vms = useMemo<Vm[]>(() => dash.data?.vms || [], [dash.data])
   const [restart, setRestart] = useState(true)
   const [selected, setSelected] = useState<string[]>([])
   const [pendingDataplane, setPendingDataplane] = useState<
@@ -258,6 +384,8 @@ export function WrapSamplePage() {
   const [pullLatest, setPullLatest] = useState(true)
   const [hopJob, setHopJob] = useState<HopJob | null>(null)
   const [hopBusy, setHopBusy] = useState(false)
+  const [station, setStation] = useState<StationId>('repo')
+  const [lastSync, setLastSync] = useState<WrapSyncReport | null>(null)
   const hopToken = useRef(0)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -266,6 +394,22 @@ export function WrapSamplePage() {
     [vms]
   )
   const reinstallIds = selected.length ? selected : vms.map((vm) => vm.id)
+
+  const syncById = useMemo(() => {
+    const map = new Map<string, NonNullable<WrapSyncReport['items']>[number]>()
+    for (const item of lastSync?.items || []) {
+      if (item?.id) map.set(item.id, item)
+    }
+    return map
+  }, [lastSync])
+
+  const syncedOk = useMemo(
+    () =>
+      (lastSync?.items || []).filter(
+        (item) => item?.ok !== false && item?.kernel?.ok !== false
+      ).length,
+    [lastSync]
+  )
 
   const invalidate = async () => {
     await Promise.all([
@@ -311,6 +455,7 @@ export function WrapSamplePage() {
         })
         try {
           const report = await syncWrapSample({ ids: [id], restart })
+          if (alive()) setLastSync((cur) => mergeSyncReports(cur, report))
           if (slotSyncFailed(report, id)) failed.push(id)
         } catch {
           failed.push(id)
@@ -329,6 +474,7 @@ export function WrapSamplePage() {
       } else {
         toast.success(`内核重装 ${ids.length}/${ids.length}`)
       }
+      setStation('slots')
       await invalidate()
     } catch (error) {
       if (!alive()) return
@@ -411,6 +557,8 @@ export function WrapSamplePage() {
     },
     onSuccess: async (report, next) => {
       setPendingDataplane(null)
+      setLastSync(report)
+      setStation('slots')
       const failed = Number(report.failed_count || 0)
       if (failed) {
         toast.error(
@@ -460,6 +608,14 @@ export function WrapSamplePage() {
 
   const data = sample.data
   const complete = data?.ok === true
+  const busy =
+    dataplane.isPending ||
+    releaseUpdate.isPending ||
+    upload.isPending ||
+    uploadCrag.isPending ||
+    make.isPending ||
+    hopBusy
+  const stations = buildStations(data, vms.length, syncedOk)
 
   return (
     <PageHeader
@@ -523,163 +679,318 @@ export function WrapSamplePage() {
         }
       >
         <p className='mb-4 max-w-3xl text-sm leading-relaxed text-muted-foreground'>
-          三种搭配，点卡片切换。默认是 <code>cli-node + kernel</code>
-          （一进程 20 native 槽）。<code>cc-node + kernel</code> 用同一份 wrap
-          kernel。<code>crag + cc-node</code> 用 crag kernel，claude_bin
-          指向仓内 cc-node。未勾选槽时改全局默认；勾选后只切这些 Claude
-          槽。Codex 不动。不改凭证、不删容器。
+          kernel 顺着这条链路走：镜像 → 仓内二进制 → 母样本 → 槽内
+          CLI。三种数据面都在同一条管线里切换：默认{' '}
+          <code>cli-node + kernel</code>，<code>cc-node + kernel</code> 用同一份
+          wrap kernel，<code>crag + cc-node</code> 用 crag kernel。Codex
+          槽会过滤，不改凭证、不删容器。
         </p>
-        <Card className='mb-4'>
-          <CardHeader>
-            <CardTitle>内核</CardTitle>
-          </CardHeader>
-          <CardContent className='space-y-3'>
-            <RadioGroup
-              value={selectedDataplane(data?.dataplane)}
-              onValueChange={(value) => {
-                if (value !== 'wrap' && value !== 'cc' && value !== 'crag')
-                  return
-                if (value === selectedDataplane(data?.dataplane)) return
-                setPendingDataplane(value)
-              }}
-              disabled={dataplane.isPending || hopBusy}
-              className='grid gap-3 lg:grid-cols-3'
-            >
-              <DataplaneOption
-                value='wrap'
-                title='cli-node + kernel'
-                desc='默认。patched cli-node，一进程 20 native 槽。kernel.json.claude_bin 指向仓内 cli-node。'
-                current={data?.dataplane !== 'cc' && data?.dataplane !== 'crag'}
-                disabled={!data?.ok}
-              >
-                <KernelPayload payload={data?.kernel} />
-                <div className='pt-1 text-xs font-medium text-muted-foreground'>
-                  cli-node
-                </div>
-                <KernelPayload payload={data?.cli_node} kind='cli' />
-                <Flag ok={Boolean(data?.cli_node?.size)} label='cli-node' />
-                <Flag ok={data?.kernel_bin} label='kernel.bin' />
-              </DataplaneOption>
-              <DataplaneOption
-                value='cc'
-                title='cc-node + kernel'
-                desc='同一份 wrap kernel。claude_bin 指向仓内 cc-node。'
-                current={data?.dataplane === 'cc'}
-                disabled={!data?.cc_node?.size}
-              >
-                <KernelPayload payload={data?.kernel} />
-                <div className='pt-1 text-xs font-medium text-muted-foreground'>
-                  cc-node
-                </div>
-                <KernelPayload payload={data?.cc_node} kind='cli' />
-                <Flag ok={Boolean(data?.cc_node?.size)} label='cc-node' />
-                <Flag ok={data?.kernel_bin} label='kernel.bin' />
-              </DataplaneOption>
-              <DataplaneOption
-                value='crag'
-                title='crag + cc-node'
-                desc='crag kernel，一进程多槽。claude_bin 指向仓内 cc-node。'
-                current={data?.dataplane === 'crag'}
-                disabled={!data?.crag?.ok || !data?.cc_node?.size}
-              >
-                <KernelPayload payload={data?.crag || undefined} />
-                <Flag
-                  ok={Boolean(data?.crag?.ok)}
-                  label='share/crag/kin-kernel'
-                />
-                <Flag ok={Boolean(data?.cc_node?.size)} label='cc-node' />
-                <input
-                  ref={cragFileRef}
-                  type='file'
-                  className='hidden'
-                  onChange={(event) => {
-                    const file = event.target.files?.[0]
-                    event.target.value = ''
-                    if (!file) return
-                    if (file.size > MAX_KERNEL_UPLOAD_BYTES) {
-                      toast.error('kernel 不能超过 32MB')
-                      return
-                    }
-                    uploadCrag.mutate(file)
-                  }}
-                />
-                <Button
-                  size='sm'
-                  variant='outline'
-                  disabled={uploadCrag.isPending || hopBusy}
-                  loading={uploadCrag.isPending}
-                  onClick={(event) => {
-                    event.preventDefault()
-                    cragFileRef.current?.click()
-                  }}
-                >
-                  上传 Crag ELF
-                </Button>
-              </DataplaneOption>
-            </RadioGroup>
-            <div className='flex items-center gap-2 text-sm'>
-              <Checkbox
-                checked={restart}
-                onCheckedChange={(v) => setRestart(v === true)}
-              />
-              <label>切换后重启 rust kernel，让槽用上对应二进制</label>
-            </div>
-          </CardContent>
-        </Card>
 
-        <div className='grid gap-4 lg:grid-cols-2'>
-          <Card>
-            <CardHeader>
-              <CardTitle>wrap 文件</CardTitle>
-            </CardHeader>
-            <CardContent className='space-y-2'>
-              {data?.meta?.release_tag ? (
-                <div className='flex items-center justify-between gap-2 text-sm'>
-                  <span className='text-muted-foreground'>GitHub</span>
-                  <span className='font-mono text-xs'>
-                    {data.meta.release_tag}
-                  </span>
-                </div>
-              ) : null}
-              <div className='flex items-center justify-between gap-2 text-sm'>
-                <span className='text-muted-foreground'>目录</span>
-                <code className='text-xs'>{sampleDirLabel(data?.dir)}</code>
+        <KernelPipeline
+          stations={stations}
+          active={station}
+          onSelect={setStation}
+          busy={busy}
+          trailing={
+            <>
+              <CircularProgress
+                value={syncedOk}
+                max={vms.length || 1}
+                size={52}
+                label='本次'
+                showPercentage={false}
+              />
+              <div className='min-w-0 text-xs'>
+                <p className='font-medium'>
+                  {lastSync
+                    ? `本次重装 ${syncedOk}/${lastSync.total ?? vms.length}`
+                    : '本次还没重装'}
+                </p>
+                <p className='text-muted-foreground'>
+                  {lastSync
+                    ? '结果见下方槽位表的「上次结果」列'
+                    : '选槽后点右上角重装，结果会写回表里'}
+                </p>
               </div>
-              <Flag ok={data?.wrapper} label='kernel wrapper' />
-              <Flag ok={data?.glibc_shim} label='glibc 2.39 shim' />
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>内核重装</CardTitle>
-            </CardHeader>
-            <CardContent className='space-y-3 text-sm leading-relaxed text-muted-foreground'>
-              <p>
-                按各槽当前数据面铺内核：cli-node + kernel、cc-node + kernel，或
-                crag + cc-node。可先从 GitHub Release 拉 linux amd64
-                文件。不改凭证、不改 SOCKS、不删容器。
-              </p>
-              <Button
-                size='sm'
-                disabled={!complete || vms.length === 0 || hopBusy}
-                loading={hopBusy && hopIds.length > 1}
-                onClick={() =>
-                  openHop(
-                    vms.map((vm) => vm.id),
-                    true
-                  )
-                }
-              >
-                一键全部重装最新内核
-              </Button>
-              {hopJob ? <HopProgress job={hopJob} /> : null}
-            </CardContent>
-          </Card>
-        </div>
+            </>
+          }
+        />
 
         <Card className='mt-4'>
           <CardHeader>
+            <CardTitle>
+              {station === 'image'
+                ? '镜像 — 二进制从哪来'
+                : station === 'repo'
+                  ? '仓内二进制 — wrap / cc / crag'
+                  : station === 'sample'
+                    ? '母样本 — 制作与提升'
+                    : '槽内 CLI — 同步与重装'}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className='text-sm'>
+            {station === 'image' ? (
+              <div className='grid gap-3 leading-relaxed text-muted-foreground lg:grid-cols-2'>
+                <div className='space-y-2'>
+                  <p>
+                    镜像安装（<code>docker compose pull</code>）下，
+                    <code>bin/kin-*</code> 与 <code>share/wrap-cli</code>
+                    由镜像入口在每次启动时写入挂载目录；源码模式则用仓内构建产物。
+                  </p>
+                  <p>
+                    下面展示的路径都是<b>控制面容器内</b>
+                    路径；宿主上的真实位置由安装目录决定，不再固定{' '}
+                    <code>/opt/vm2api</code>。
+                  </p>
+                </div>
+                <div className='space-y-2 border-l-2 border-[color:var(--status-caution)] pl-3'>
+                  <p className='font-medium text-foreground'>
+                    升级会覆盖你上传的 kernel
+                  </p>
+                  <p>
+                    「本地上传」改的是挂载目录里的文件。下次{' '}
+                    <code>compose pull</code>{' '}
+                    升级后，入口会用新镜像里的版本覆盖它。要长期固定自编
+                    kernel，把它打进镜像或升级后重新上传并重装槽位。
+                  </p>
+                </div>
+              </div>
+            ) : null}
+
+            {station === 'repo' ? (
+              <div className='space-y-4'>
+                {data?.meta?.release_tag ? (
+                  <div className='rounded-md border bg-muted/30 p-3'>
+                    <Row label='GitHub Release'>
+                      <span className='font-mono text-xs'>
+                        {data.meta.release_tag}
+                      </span>
+                    </Row>
+                  </div>
+                ) : null}
+                <RadioGroup
+                  value={selectedDataplane(data?.dataplane)}
+                  onValueChange={(value) => {
+                    if (value !== 'wrap' && value !== 'cc' && value !== 'crag')
+                      return
+                    if (value === selectedDataplane(data?.dataplane)) return
+                    setPendingDataplane(value)
+                  }}
+                  disabled={dataplane.isPending || hopBusy}
+                  className='grid gap-3 lg:grid-cols-3'
+                >
+                  <DataplaneOption
+                    value='wrap'
+                    title='cli-node + kernel'
+                    desc='默认。patched cli-node，一进程 20 native 槽。kernel.json.claude_bin 指向仓内 cli-node。'
+                    current={
+                      data?.dataplane !== 'cc' && data?.dataplane !== 'crag'
+                    }
+                    disabled={!data?.ok}
+                  >
+                    <KernelPayload payload={data?.kernel} />
+                    <div className='pt-1 text-xs font-medium text-muted-foreground'>
+                      cli-node
+                    </div>
+                    <KernelPayload payload={data?.cli_node} kind='cli' />
+                    <Flag ok={Boolean(data?.cli_node?.size)} label='cli-node' />
+                    <Flag ok={data?.kernel_bin} label='kernel.bin' />
+                  </DataplaneOption>
+                  <DataplaneOption
+                    value='cc'
+                    title='cc-node + kernel'
+                    desc='同一份 wrap kernel。claude_bin 指向仓内 cc-node。'
+                    current={data?.dataplane === 'cc'}
+                    disabled={!data?.cc_node?.size}
+                  >
+                    <KernelPayload payload={data?.kernel} />
+                    <div className='pt-1 text-xs font-medium text-muted-foreground'>
+                      cc-node
+                    </div>
+                    <KernelPayload payload={data?.cc_node} kind='cli' />
+                    <Flag ok={Boolean(data?.cc_node?.size)} label='cc-node' />
+                    <Flag ok={data?.kernel_bin} label='kernel.bin' />
+                  </DataplaneOption>
+                  <DataplaneOption
+                    value='crag'
+                    title='crag + cc-node'
+                    desc='crag kernel，一进程多槽。claude_bin 指向仓内 cc-node。'
+                    current={data?.dataplane === 'crag'}
+                    disabled={!data?.crag?.ok || !data?.cc_node?.size}
+                  >
+                    <KernelPayload payload={data?.crag || undefined} />
+                    <Flag
+                      ok={Boolean(data?.crag?.ok)}
+                      label='share/crag/kin-kernel'
+                    />
+                    <Flag ok={Boolean(data?.cc_node?.size)} label='cc-node' />
+                    <input
+                      ref={cragFileRef}
+                      type='file'
+                      className='hidden'
+                      onChange={(event) => {
+                        const file = event.target.files?.[0]
+                        event.target.value = ''
+                        if (!file) return
+                        if (file.size > MAX_KERNEL_UPLOAD_BYTES) {
+                          toast.error('kernel 不能超过 32MB')
+                          return
+                        }
+                        uploadCrag.mutate(file)
+                      }}
+                    />
+                    <Button
+                      size='sm'
+                      variant='outline'
+                      disabled={uploadCrag.isPending || hopBusy}
+                      loading={uploadCrag.isPending}
+                      onClick={(event) => {
+                        event.preventDefault()
+                        cragFileRef.current?.click()
+                      }}
+                    >
+                      上传 Crag ELF
+                    </Button>
+                  </DataplaneOption>
+                </RadioGroup>
+                <div className='flex flex-wrap items-center gap-2'>
+                  <Button
+                    size='sm'
+                    variant='outline'
+                    disabled={releaseUpdate.isPending || hopBusy}
+                    loading={releaseUpdate.isPending}
+                    onClick={() => setReleaseOpen(true)}
+                  >
+                    拉取 wrap/crag
+                  </Button>
+                  <Button
+                    size='sm'
+                    variant='outline'
+                    disabled={upload.isPending || hopBusy}
+                    loading={upload.isPending}
+                    onClick={() => fileRef.current?.click()}
+                  >
+                    本地上传 wrap kernel
+                  </Button>
+                  <p className='text-xs leading-relaxed text-muted-foreground'>
+                    拉取只更新仓内 linux amd64 wrap kernel、cli-node、cc-node 与
+                    crag kernel；本地上传只覆盖 wrap
+                    kernel，槽位要再重装才生效。
+                  </p>
+                </div>
+              </div>
+            ) : null}
+
+            {station === 'sample' ? (
+              <div className='grid gap-4 lg:grid-cols-2'>
+                <div className='space-y-2 rounded-md border bg-muted/40 p-3'>
+                  <Row label='目录'>
+                    <code className='text-xs'>{sampleDirLabel(data?.dir)}</code>
+                  </Row>
+                  <Flag ok={data?.kernel_bin} label='kernel.bin' />
+                  <Flag ok={data?.wrapper} label='kernel wrapper' />
+                  <Flag ok={data?.glibc_shim} label='glibc 2.39 shim' />
+                </div>
+                <div className='space-y-3 leading-relaxed text-muted-foreground'>
+                  <p>
+                    重整母本会用当前 <code>share/wrap-cli</code> 里的 cli-node
+                    补 wrapper / shim，并叠上仓内最新
+                    kernel。晋升母本从槽内收回已跑通的 cli-node，不复制凭证或
+                    SOCKS。
+                  </p>
+                  <label className='flex cursor-pointer items-center gap-2 text-foreground'>
+                    <Checkbox
+                      checked={restart}
+                      onCheckedChange={(v) => setRestart(v === true)}
+                    />
+                    <span>
+                      切换或同步后重启 rust kernel，让槽用上对应二进制
+                    </span>
+                  </label>
+                  <Button
+                    size='sm'
+                    variant='outline'
+                    disabled={make.isPending || hopBusy}
+                    loading={make.isPending}
+                    onClick={() => setMakeOpen(true)}
+                  >
+                    重整母本
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+
+            {station === 'slots' ? (
+              <div className='space-y-3 leading-relaxed text-muted-foreground'>
+                <p>
+                  按各槽当前数据面铺内核：cli-node + kernel、cc-node +
+                  kernel，或 crag + cc-node。可先从 GitHub Release 拉 linux
+                  amd64 文件。不改凭证、不改 SOCKS、不删容器。
+                </p>
+                <div className='flex flex-wrap items-center gap-2'>
+                  <Button
+                    size='sm'
+                    disabled={!complete || vms.length === 0 || hopBusy}
+                    loading={hopBusy && hopIds.length > 1}
+                    onClick={() =>
+                      openHop(
+                        vms.map((vm) => vm.id),
+                        true
+                      )
+                    }
+                  >
+                    一键全部重装最新内核
+                  </Button>
+                  <Button
+                    size='sm'
+                    variant='outline'
+                    disabled={!complete || !reinstallIds.length || hopBusy}
+                    loading={hopBusy && hopIds.length !== 1}
+                    onClick={() => openHop(reinstallIds, false)}
+                  >
+                    {selected.length
+                      ? `重装所选 ${selected.length} 槽`
+                      : '重装全部当前内核'}
+                  </Button>
+                  <label className='flex cursor-pointer items-center gap-2 text-foreground'>
+                    <Checkbox
+                      checked={restart}
+                      onCheckedChange={(v) => setRestart(v === true)}
+                    />
+                    <span>重启 rust kernel</span>
+                  </label>
+                </div>
+                {hopJob ? <HopProgress job={hopJob} /> : null}
+                {lastSync ? (
+                  <p className='text-foreground'>
+                    上次同步：成功 {lastSync.ok_count ?? 0}，失败{' '}
+                    {lastSync.failed_count ?? 0}，进程未起{' '}
+                    {wrapSyncKernelFails(lastSync.items)}。
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+
+        <Card className='mt-4'>
+          <CardHeader className='flex-row items-center justify-between gap-2 space-y-0'>
             <CardTitle>槽位</CardTitle>
+            {vms.length ? (
+              <div className='flex items-center gap-2'>
+                <span className='text-xs text-muted-foreground tabular-nums'>
+                  已选 {selected.length}/{vms.length}
+                </span>
+                <Button
+                  size='sm'
+                  variant='ghost'
+                  disabled={!selected.length}
+                  onClick={() => setSelected([])}
+                >
+                  清空
+                </Button>
+              </div>
+            ) : null}
           </CardHeader>
           <CardContent>
             {vms.length === 0 ? (
@@ -689,89 +1000,116 @@ export function WrapSamplePage() {
                 to='/vm'
               />
             ) : (
-              <div className='overflow-x-auto'>
-                <table className='w-full text-sm'>
-                  <thead className='text-left text-muted-foreground'>
-                    <tr>
-                      <th className='w-8 py-2 font-medium'>选</th>
-                      <th className='py-2 font-medium'>槽</th>
-                      <th className='py-2 font-medium'>OS</th>
-                      <th className='py-2 font-medium'>引擎</th>
-                      <th className='py-2 font-medium'>内核</th>
-                      <th className='py-2 font-medium'>母本</th>
-                      <th className='py-2 text-right font-medium'>动作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {vms.map((vm) => {
-                      const engine = engineOf(vm)
-                      const rust = engine === 'rust'
-                      const source = data?.meta?.source_vm === vm.id
-                      return (
-                        <tr key={vm.id} className='border-b last:border-0'>
-                          <td className='py-2'>
-                            <Checkbox
-                              checked={selected.includes(vm.id)}
-                              onCheckedChange={(v) => toggle(vm.id, v === true)}
-                              aria-label={`选择 ${vm.id}`}
-                            />
-                          </td>
-                          <td className='py-2 font-mono text-xs'>
-                            <Link
-                              to='/vm/$id'
-                              params={{ id: vm.id }}
-                              className='underline underline-offset-4'
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className='w-8'>
+                      <Checkbox
+                        aria-label='全选槽位'
+                        checked={
+                          selected.length === vms.length
+                            ? true
+                            : selected.length
+                              ? 'indeterminate'
+                              : false
+                        }
+                        onCheckedChange={(v) =>
+                          setSelected(v === true ? vms.map((vm) => vm.id) : [])
+                        }
+                      />
+                    </TableHead>
+                    <TableHead>槽</TableHead>
+                    <TableHead>OS</TableHead>
+                    <TableHead>引擎</TableHead>
+                    <TableHead>内核</TableHead>
+                    <TableHead>母本</TableHead>
+                    <TableHead>上次结果</TableHead>
+                    <TableHead className='text-right'>动作</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {vms.map((vm) => {
+                    const engine = engineOf(vm)
+                    const rust = engine === 'rust'
+                    const source = data?.meta?.source_vm === vm.id
+                    const tone = slotSyncTone(syncById.get(vm.id))
+                    const plane = dataplaneOf(vm)
+                    return (
+                      <TableRow
+                        key={vm.id}
+                        data-state={
+                          selected.includes(vm.id) ? 'selected' : undefined
+                        }
+                      >
+                        <TableCell>
+                          <Checkbox
+                            checked={selected.includes(vm.id)}
+                            onCheckedChange={(v) => toggle(vm.id, v === true)}
+                            aria-label={`选择 ${vm.id}`}
+                          />
+                        </TableCell>
+                        <TableCell className='font-mono text-xs'>
+                          <Link
+                            to='/vm/$id'
+                            params={{ id: vm.id }}
+                            className='underline underline-offset-4'
+                          >
+                            {vm.id}
+                          </Link>
+                        </TableCell>
+                        <TableCell className='text-muted-foreground'>
+                          {osOf(vm)}
+                        </TableCell>
+                        <TableCell>
+                          {inferenceEngineLabel(
+                            normalizeInferenceEngine(engine, 'auto')
+                          )}
+                        </TableCell>
+                        <TableCell className='font-mono text-xs'>
+                          {plane === '—' ? '—' : dataplaneLabel(plane)}
+                        </TableCell>
+                        <TableCell className='text-muted-foreground'>
+                          {source ? '当前母本' : rust ? '可收成' : '只收文件'}
+                        </TableCell>
+                        <TableCell>
+                          {tone ? (
+                            <StatusMark tone={tone} />
+                          ) : (
+                            <span className='text-xs text-muted-foreground'>
+                              —
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <div className='flex justify-end gap-2'>
+                            <Button
+                              size='sm'
+                              variant='outline'
+                              disabled={!rust || promote.isPending || hopBusy}
+                              onClick={() => setPromoteId(vm.id)}
                             >
-                              {vm.id}
-                            </Link>
-                          </td>
-                          <td className='py-2 text-muted-foreground'>
-                            {osOf(vm)}
-                          </td>
-                          <td className='py-2'>
-                            {inferenceEngineLabel(
-                              normalizeInferenceEngine(engine, 'auto')
-                            )}
-                          </td>
-                          <td className='py-2 font-mono text-xs'>
-                            {dataplaneOf(vm) === '—'
-                              ? '—'
-                              : dataplaneLabel(dataplaneOf(vm))}
-                          </td>
-                          <td className='py-2 text-muted-foreground'>
-                            {source ? '当前母本' : rust ? '可收成' : '只收文件'}
-                          </td>
-                          <td className='py-2'>
-                            <div className='flex justify-end gap-2'>
-                              <Button
-                                size='sm'
-                                variant='outline'
-                                disabled={!rust || promote.isPending || hopBusy}
-                                onClick={() => setPromoteId(vm.id)}
-                              >
-                                晋升母本
-                              </Button>
-                              <Button
-                                size='sm'
-                                variant='outline'
-                                disabled={!complete || hopBusy}
-                                loading={
-                                  hopBusy &&
-                                  hopIds.length === 1 &&
-                                  hopIds[0] === vm.id
-                                }
-                                onClick={() => openHop([vm.id], false)}
-                              >
-                                替换此槽
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                              晋升母本
+                            </Button>
+                            <Button
+                              size='sm'
+                              variant='outline'
+                              disabled={!complete || hopBusy}
+                              loading={
+                                hopBusy &&
+                                hopIds.length === 1 &&
+                                hopIds[0] === vm.id
+                              }
+                              onClick={() => openHop([vm.id], false)}
+                            >
+                              替换此槽
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
             )}
             {rustVms.length === 0 ? (
               <p className='mt-3 text-xs text-muted-foreground'>
