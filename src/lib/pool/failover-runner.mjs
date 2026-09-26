@@ -265,7 +265,16 @@ function incompleteHopResult(result, selected, policy, attemptNo) {
 }
 
 function applyCooldown(scheduler, selected, policy, model, stickyRouter = null, { diagnosticPin = false } = {}) {
-  if (policy?.action !== 'continue-and-cooldown' && policy?.action !== 'disable' && policy?.action !== 'pause') return
+  // A committed auth failure stops delivery, but still retires its invalid credential.
+  const stoppedAuth =
+    policy?.action === 'stop' && (policy.reason === 'oauth_no_refresh' || policy.reason === 'oauth_revoked')
+  if (
+    policy?.action !== 'continue-and-cooldown' &&
+    policy?.action !== 'disable' &&
+    policy?.action !== 'pause' &&
+    !stoppedAuth
+  )
+    return
   // VM / master pin is a diagnostic. A 401 from the wrong inbound class
   // must not forever-park a Setup Token that has no refresh by design.
   if (diagnosticPin && (policy.reason === 'oauth_no_refresh' || policy.reason === 'oauth_revoked')) {

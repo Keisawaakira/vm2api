@@ -299,6 +299,9 @@ if (routingConfig?.logging) {
     mode: process.env.KIN_REQUEST_LOG_MODE || routingConfig.logging.mode,
     retainDays: routingConfig.logging.retain_days,
     debugRetainDays: routingConfig.logging.debug_retain_days,
+    rawNonstreamDebug: routingConfig.logging.raw_nonstream_debug === true,
+    offlineKernelProbe: routingConfig.logging.offline_kernel_probe === true,
+    offlineKernelDataplane: routingConfig.logging.offline_kernel_dataplane || 'current',
     maxMb: routingConfig.logging.max_mb,
     mutedErrorClasses: routingConfig.logging.muted_error_classes,
   })
@@ -492,6 +495,9 @@ backupService.onRestored((db) => {
     mode: process.env.KIN_REQUEST_LOG_MODE || routingConfig.logging?.mode,
     retainDays: routingConfig.logging?.retain_days,
     debugRetainDays: routingConfig.logging?.debug_retain_days,
+    rawNonstreamDebug: routingConfig.logging?.raw_nonstream_debug === true,
+    offlineKernelProbe: routingConfig.logging?.offline_kernel_probe === true,
+    offlineKernelDataplane: routingConfig.logging?.offline_kernel_dataplane || 'current',
     maxMb: routingConfig.logging?.max_mb,
     mutedErrorClasses: routingConfig.logging?.muted_error_classes,
   })
@@ -935,6 +941,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && (p === '/v1/messages/count_tokens' || p === '/messages/count_tokens')) {
       return await handleUserCountTokens(req, res, {
+        offlineKernelProbe: requestLog.offlineKernelProbe === true,
         json,
         readBody,
         requireAuth,

@@ -111,7 +111,8 @@ test('openai.chat / messages / responses convert to the same cacheable block sha
   }
 
   assert.deepEqual(rewriteStamps(chat), rewriteStamps(messages))
-  assert.deepEqual(rewriteStamps(responses), rewriteStamps(messages))
+  // Responses input had no historical caller marker: do not invent a penultimate anchor.
+  assert.deepEqual(rewriteStamps(responses), ['tools[0]', 'messages[4].content[0]'])
 })
 
 test('unofficial cli-hop keeps converted openai.chat and messages shapes marker-free', () => {

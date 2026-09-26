@@ -28,6 +28,15 @@ share/wrap-cli/cli-dist/
 share/wrap-cli/bun
 !share/crag/
 !share/crag/**
+!share/offline-candidates/
+share/offline-candidates/*
+!share/offline-candidates/native-v155-r1/
+!share/offline-candidates/native-v155-r2/
+!share/offline-candidates/native-v155-r3/
+!share/wrap-fixed/
+!share/wrap-fixed/**
+!share/cc-fixed/
+!share/cc-fixed/**
 .workflow/
 __pycache__/
 web/dist/

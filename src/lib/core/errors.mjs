@@ -149,11 +149,13 @@ const CLIENT_CANCEL_CODES = new Set(['client_cancelled', 'request_cancelled', 'c
 
 export function isClientCancelledCode(code, message = '') {
   if (CLIENT_CANCEL_CODES.has(String(code || '').trim())) return true
-  return /client_aborted|request_cancelled|selection_cancelled|context canceled/i.test(`${code || ''} ${message || ''}`)
+  return /client_aborted|request_cancelled|selection_cancelled/i.test(`${code || ''} ${message || ''}`)
 }
 
 export function isClientCancelledResult(result = {}) {
-  if (result?.clientCancelled === true || result?.terminalState === 'cancelled') return true
+  // A kernel's cancelled terminal or transport "context canceled" text alone
+  // does not prove that the downstream caller disconnected.
+  if (result?.clientCancelled === true) return true
   const code = result?.body?.error?.code || result?.error_code || ''
   const message = result?.body?.error?.message || result?.error_message || ''
   return isClientCancelledCode(code, message)
@@ -219,12 +221,38 @@ export function assistantStopReason(result = {}) {
   return String(result?.stopReason || result?.body?.stop_reason || '').trim()
 }
 
+const NEGATIVE_TERMINAL_STATES = new Set([
+  'incomplete',
+  'error',
+  'transport_error',
+  'rejected',
+  'failed',
+  'cancelled',
+  'exhausted',
+])
+
+export function isNegativeTerminalState(state) {
+  return NEGATIVE_TERMINAL_STATES.has(
+    String(state || '')
+      .trim()
+      .toLowerCase(),
+  )
+}
+
+export function hasExplicitAssistantFailure(result = {}) {
+  return (
+    result.transportError === true ||
+    isNegativeTerminalState(result.terminalState) ||
+    isNegativeTerminalState(result.headers?.['x-kin-terminal-state'])
+  )
+}
+
 /**
- * sub2api: message_stop ends the stream even when the body has no visible text.
- * Without that terminal event, stop_reason plus visible text/tool/refusal is required.
- * Thinking-only and a bare stop_reason are not complete.
+ * A real message_stop completes even an empty body. Otherwise require a stop
+ * reason and visible text/tool/refusal. Explicit failures always take priority.
  */
 export function isCompleteAssistantMessage(result = {}) {
+  if (hasExplicitAssistantFailure(result)) return false
   const body = result?.body && typeof result.body === 'object' ? result.body : result
   if (!isAssistantMessageBody(body)) return false
   if (result?.sawMessageStop) return true
@@ -235,31 +263,33 @@ export function isCompleteAssistantMessage(result = {}) {
 export function isIncompleteAssistantMessage(result = {}) {
   const body = result?.body && typeof result.body === 'object' ? result.body : result
   if (!isAssistantMessageBody(body)) return false
-  return !isCompleteAssistantMessage(result?.body ? result : { body })
+  // This predicate describes the body, not transport success. Keep the existing
+  // incomplete-body recovery path without treating explicit failed text as success.
+  return !isCompleteAssistantMessage({ body, stopReason: result.stopReason, sawMessageStop: result.sawMessageStop })
 }
 
 export function finalizeAssembledAssistantHop(result = {}) {
   if (isClientCancelledResult(result)) return result
-  if (isCompleteAssistantMessage(result)) return result?.ok ? result : { ...result, ok: true }
+  if (hasExplicitAssistantFailure(result)) return result.ok ? { ...result, ok: false } : result
+  if (isCompleteAssistantMessage(result)) {
+    const body = result.usage ? { ...result.body, usage: result.usage } : result.body
+    return result.ok && body === result.body ? result : { ...result, body, ok: true }
+  }
   if (isIncompleteAssistantMessage(result) || result?.ok) {
-    return {
-      ...result,
-      ok: false,
-      committed: !!result?.committed,
-      terminalState: 'incomplete',
-    }
+    return { ...result, ok: false, committed: result.committed === true, terminalState: 'incomplete' }
   }
   return result
 }
 
 export function mergeAssembledAssistantHop(result = {}, assembled = null) {
-  if (!assembled || result?.body?.error || result?.body?.type === 'error') return result
-  const assembledResult = { body: assembled, stopReason: assembled.stop_reason }
+  if (!assembled || hasExplicitAssistantFailure(result) || result?.body?.error || result?.body?.type === 'error')
+    return result
+  const assembledResult = { body: assembled, stopReason: assembled.stop_reason, sawMessageStop: result.sawMessageStop }
   if (!isCompleteAssistantMessage(assembledResult) && isCompleteAssistantMessage(result)) return result
   return {
     ...result,
-    body: assembled,
-    usage: assembled.usage || result.usage,
+    body: result.usage ? { ...assembled, usage: result.usage } : assembled,
+    usage: result.usage || assembled.usage,
     model: assembled.model || result.model,
     stopReason: assembled.stop_reason || result.stopReason,
   }
@@ -269,7 +299,7 @@ export function incompleteAssistantClientError(result = {}) {
   return {
     ...result,
     ok: false,
-    committed: !!result?.committed,
+    committed: result.committed === true,
     terminalState: 'incomplete',
     status: 502,
     body: {
@@ -283,7 +313,7 @@ export function incompleteAssistantClientError(result = {}) {
   }
 }
 
-export function mapUpstreamError(status, body, headers = {}) {
+export function mapUpstreamError(status, body, headers = {}, { clientCancelled } = {}) {
   const upType = upstreamErrorType(body)
   const inboundCode = body?.error?.code || null
   let msg =
@@ -309,7 +339,7 @@ export function mapUpstreamError(status, body, headers = {}) {
       status: 503,
     })
   }
-  if (isClientCancelledCode(inboundCode, msg)) {
+  if (clientCancelled === true || (clientCancelled !== false && isClientCancelledCode(inboundCode, msg))) {
     return makeError({
       type: ErrorType.TIMEOUT,
       code: 'client_cancelled',

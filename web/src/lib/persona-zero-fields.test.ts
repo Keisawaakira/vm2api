@@ -22,7 +22,7 @@ describe('zero inject field mapping', () => {
       identityHide: true,
       agentText: ZERO_WIDTH_PLACEHOLDER,
       agentHide: true,
-      agentCacheTtl: '1h',
+      agentCacheTtl: '',
       callerText: '{{caller_system}}',
       callerHide: false,
       callerDropIfEmpty: true,

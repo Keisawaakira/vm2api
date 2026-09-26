@@ -299,26 +299,35 @@ async function runHop({ mode, opts }) {
   try {
     result = await send(opts)
     noteWrapHop(opts.exec)
-    if (opts.signal?.aborted || isClientCancelledResult(result)) {
+    const cancelled = () => opts.signal?.aborted || isClientCancelledResult(result)
+    const canReplay = () => result.committed !== true && !cancelled()
+    if (cancelled()) {
       result = clientCancelledResult(result)
-    } else if (result.transportError === true && result.committed !== true) {
+    } else if (result.transportError === true && canReplay()) {
       result = await send(opts)
       result = { ...result, rust_transport_retried: true }
       noteWrapHop(opts.exec)
     }
-    if (!isClientCancelledResult(result) && isNeedsRefreshResult(result)) {
+    if (isNeedsRefreshResult(result) && canReplay()) {
       const ensure = opts.ensureCredential || ensureWorkerCredential
       const ensured = await ensure(opts.exec, { force: true })
-      if (ensured?.ok !== true) result = credentialEnsureFailure(result, ensured)
-      else {
-        const recycle = opts.recycleWrap || scheduleWrapRecycle
-        recycle(opts.exec)
-        await awaitWrapRecycle(opts.exec)
-        result = await send(opts)
-        result = { ...result, credential_retried: true }
-        noteWrapHop(opts.exec)
+      // Cancellation during recovery must retain the original failure/usage,
+      // not turn it into a new credential error or another upstream send.
+      if (canReplay()) {
+        if (ensured?.ok !== true) result = credentialEnsureFailure(result, ensured)
+        else {
+          const recycle = opts.recycleWrap || scheduleWrapRecycle
+          recycle(opts.exec)
+          await awaitWrapRecycle(opts.exec)
+          if (canReplay()) {
+            result = await send(opts)
+            result = { ...result, credential_retried: true }
+            noteWrapHop(opts.exec)
+          }
+        }
       }
     }
+    if (cancelled()) result = clientCancelledResult(result)
     return {
       ...result,
       engine,

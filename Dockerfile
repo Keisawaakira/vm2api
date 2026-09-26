@@ -5,6 +5,8 @@ RUN corepack enable && corepack prepare pnpm@10.18.2 --activate
 COPY web/package.json web/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY web/ ./
+# The shared catalog resolves outside /web, just as ../src does in a checkout.
+COPY src/lib/transport/offline-candidate-round.json /src/lib/transport/offline-candidate-round.json
 RUN pnpm build
 
 FROM node:22-bookworm-slim
@@ -22,6 +24,13 @@ COPY docker/kin-os ./docker/kin-os
 COPY --from=web /web/dist ./web/dist
 COPY bin/kin-kernel bin/kin-egress bin/kin-worker bin/kin-codex-kernel bin/kin-cookie-auth /opt/vm2api/image-bin/
 COPY share/wrap-cli /opt/vm2api/image-wrap-cli
+# Offline explicit crag probes can use this immutable asset without installing it into real slots.
+COPY share/crag/kin-kernel /opt/vm2api/image-crag/kin-kernel
+# Candidate CLIs are diagnostic assets only. No entrypoint/runtime installer copies them to production slots.
+COPY share/offline-candidates /opt/vm2api/image-offline-candidates
+# Owner-approved fixed wrap pair remains separate from original release updates.
+COPY share/wrap-fixed /opt/vm2api/image-wrap-fixed
+COPY share/cc-fixed /opt/vm2api/image-cc-fixed
 COPY scripts/docker-entrypoint.sh /usr/local/bin/vm2api-entrypoint
 RUN chmod 755 /usr/local/bin/vm2api-entrypoint /opt/vm2api/image-bin/* \
   && cp -a /opt/vm2api/src/config /opt/vm2api/image-config \

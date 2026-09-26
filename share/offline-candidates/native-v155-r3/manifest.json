@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "id": "native-v155-r3",
+  "status": "offline_only_pending_runtime",
+  "production_approved": false,
+  "supported_layouts": [
+    "zero",
+    "identity"
+  ],
+  "kernel_sha256": {
+    "cc": "c44eae87aec7c537196513cc78d6e7e7c0c14b20bdc6c15eb7c0a5a68e1658a0",
+    "crag": "5764a186e3778278a8733ecaf924211070968def7c6648c6f6ecf3b76120a537"
+  },
+  "tools": {
+    "upx": "upx 5.0.1",
+    "syntax_minifier": "1.4.2"
+  },
+  "execution_guard": {
+    "env": "VM2API_OFFLINE_CANDIDATE",
+    "value": "native-v155-r3",
+    "base_url": "literal http://127.0.0.1:port only"
+  },
+  "artifacts": {
+    "cc-node": {
+      "file": "cc-node",
+      "bytes": 27158064,
+      "sha256": "71010c5bbef4c95965e35add11ab619b19516e9310df39772d128eba0ad345cc",
+      "unpacked_bytes": 111048832,
+      "unpacked_sha256": "21e5413d577fbcf22adeb9e9f34df2b07b16ae8275711ca1eb0912613ea59804",
+      "source_packed_sha256": "be5eec49a78345dd935e302e88c9d7ad0afbb09a195356d81be1bdea766f3960",
+      "source_unpacked_sha256": "393230977c79d4cb89f0251ddcf5fd1151c30a73536f7feac984900605e5e832",
+      "source_candidate_sha256": "0c662e6464c302bede85ca65ac2d68745520ed00946eada8f4243d6082f87e96",
+      "source_candidate_unpacked_sha256": "b881ae4e449a391a430609027e1113f0429246a0e9f33c6c1beafa38c55ac277",
+      "validations": {
+        "elf_graph": true,
+        "no_bytecode": true,
+        "unchanged_outside_js_spans": true,
+        "syntax": {
+          "syntax": true,
+          "imports": 749,
+          "exports": 0
+        },
+        "upx_integrity": true,
+        "exact_unpack_roundtrip": true
+      },
+      "patches": [
+        {
+          "id": "connect-existing-api-debug-bindings",
+          "offset": 96908227,
+          "bytes": 8548,
+          "replacement_bytes": 7070,
+          "before_sha256": "75df7c043da333c2ae02d8e1cd5122c6844de3db88625f1e7064d83a1a95d9e3",
+          "after_sha256": "a5455ba9ebef2a57623ba96dedb6fe145c4ba4cb997ce4ebe47728a636a84a26"
+        },
+        {
+          "id": "connect-existing-workload-context",
+          "offset": 96982222,
+          "bytes": 2528,
+          "replacement_bytes": 2097,
+          "before_sha256": "dfba0d5a901a434868ffb77a7c111c5100d21efdf5fb35584e40a64eb75eff9f",
+          "after_sha256": "e744af64e1f04c513f0f14ef487dc58c931ff3f4826d5758b5a0428aa242691e"
+        },
+        {
+          "id": "snapshot-caller-system",
+          "offset": 108508497,
+          "bytes": 1274,
+          "replacement_bytes": 999,
+          "before_sha256": "ce0ddb2f29b0b2850a95202571ffd74125fc2722c28a5973b8c53b482018c05f",
+          "after_sha256": "55a762b86b5d62c52150ef1cecdd84f2d349360f0bb33fee7b651a7d98ce6054"
+        },
+        {
+          "id": "preserve-caller-api-blocks",
+          "offset": 108520509,
+          "bytes": 2072,
+          "replacement_bytes": 2023,
+          "before_sha256": "b378a62d9584f035ce0d446736fe23fe63949bfd5beed6be02cd899e8cd91007",
+          "after_sha256": "94e6a344ec20c2b8139183e18fa6ed486908f3b2eb51829bd7abc989f908b945"
+        },
+        {
+          "id": "preserve-crag-api-error-detail",
+          "offset": 108588034,
+          "bytes": 2149,
+          "replacement_bytes": 1828,
+          "before_sha256": "c0f7b1ff2cf4805215a357fc71d995461ed576b187af747f06e934cf795a34ff",
+          "after_sha256": "7efee0ef910656a37f2d11e6e7e09bd60a2b269d5604faed192e8ae9769a796c"
+        },
+        {
+          "id": "offline-guard-and-cc-initialization",
+          "offset": 111000022,
+          "bytes": 3620,
+          "replacement_bytes": 3282,
+          "before_sha256": "9c1d01a6251d9460926719a6d7035e9c2805a475e2ccb4211ea6915b183512bd",
+          "after_sha256": "b385be7388fe973607ca24af377f6cbe2c9769dbd9f84572263b39d6088659d8"
+        }
+      ]
+    }
+  },
+  "workload_context": {
+    "source": "// src/utils/workloadContext.ts\nimport { AsyncLocalStorage as AsyncLocalStorage4 } from \"async_hooks\";\nfunction getWorkload2() {\n  return workloadStorage.getStore()?.workload;\n}\nfunction runWithWorkload(workload, fn) {\n  return workloadStorage.run({ workload }, fn);\n}\nvar workloadStorage;\nvar init_workloadContext = __esm(() => {\n  workloadStorage = new AsyncLocalStorage4;\n});\n",
+    "sha256": "083b38fbc063fdfa1eb317d2a90205c9118747d880a4bc055a15e2179f97a296",
+    "unchanged_from_r1": true
+  },
+  "local_validation": {
+    "completed": true,
+    "native_execution": false,
+    "user_capture_accepted": false,
+    "behavior_tests": 12,
+    "test_sha256": "cb63eeceed1de1a045e1a9aae717ecf0c3411f608af010162f5bf0ee725c106d",
+    "scope": "extracted API factory/fetch and real logger with controlled SDK/network/dependencies; not Linux ELF execution"
+  },
+  "limitations": [
+    "No new Linux native runtime acceptance yet",
+    "Only the external API-client debug bindings are repaired; no logging is disabled",
+    "Crag request framing remains unchanged",
+    "Original/approved/r1/r2 artifacts are unchanged"
+  ],
+  "patches_sha256": "f84c1290d22e5e58e3bf73c1d5188d9e5f49a4b780ab3fd2b0f3aee1bb2f9060",
+  "debug_dependencies": {
+    "log_function": "function logForDebugging2(message, { level } = {\n  level: \"debug\"\n}) {\n  if (LEVEL_ORDER[level] < LEVEL_ORDER[getMinDebugLogLevel()]) {\n    return;\n  }\n  if (!shouldLogDebugMessage(message)) {\n    return;\n  }\n  if (hasFormattedOutput && message.includes(`\n`)) {\n    message = jsonStringify(message);\n  }\n  const timestamp = new Date().toISOString();\n  const output = `${timestamp} [${level.toUpperCase()}] ${message.trim()}\n`;\n  if (isDebugToStdErr2()) {\n    writeToStderr(output);\n    return;\n  }\n  getDebugWriter().write(output);\n}",
+    "sha256": "01644c307197e59d1830695637f88f6ccaf35c3ae57c4f6f0cae47963013d24f",
+    "stderr_getter": "isDebugToStdErr2 = memoize_default(() => {\n    return process.argv.includes(\"--debug-to-stderr\") || process.argv.includes(\"-d2e\");\n  });",
+    "stderr_sha256": "dc03129fe34a116875388851c3eccdfeaeb90386782afe21546754fae6f22a4b",
+    "unchanged_from_r2": true
+  }
+}

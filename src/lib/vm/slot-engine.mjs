@@ -15,9 +15,11 @@ import { isCodexVm } from './vm-kind.mjs'
 export const INFERENCE_ENGINES = Object.freeze(['rust'])
 export const SLOT_PERSONA_PRESETS = Object.freeze(['official', 'official_full', 'zero'])
 export const OFFICIAL_CC_INFERENCES = Object.freeze(['http', 'cli-hop'])
-export const KERNEL_DATAPLANES = Object.freeze(['wrap', 'cc', 'crag'])
+export const KERNEL_DATAPLANES = Object.freeze(['wrap', 'wrap-fixed', 'cc', 'cc-fixed', 'crag'])
+export const CONTAINER_CLI_FIXED_BIN = '/home/kincli/.kin/cli-node-fixed'
 export const CONTAINER_CLI_NODE_BIN = '/home/kincli/.kin/cli-node'
 export const CONTAINER_CC_NODE_BIN = '/home/kincli/.kin/cc-node'
+export const CONTAINER_CC_FIXED_BIN = '/home/kincli/.kin/cc-node-fixed'
 export const CONTAINER_CRAG_CLAUDE_BIN = CONTAINER_CC_NODE_BIN
 
 export const KERNEL_NATIVE_SLOT_COUNT = 20
@@ -121,11 +123,22 @@ export function normalizeKernelDataplane(value, { inherit = false } = {}) {
   if (raw === 'wrap' || raw === 'cli-node' || raw === 'native-messages' || raw === 'nativemessages') {
     return 'wrap'
   }
+  if (raw === 'wrap-fixed' || raw === 'cc-fixed') return raw
   if (raw === 'cc' || raw === 'cc-node') return 'cc'
   if (raw === 'crag' || raw === 'official-cli' || raw === 'official-cc' || raw === 'claude-code') {
     return 'crag'
   }
   return inherit ? '' : 'wrap'
+}
+
+export function containerCliBinForDataplane(dataplane) {
+  if (dataplane === 'wrap-fixed') return CONTAINER_CLI_FIXED_BIN
+  if (dataplane === 'cc-fixed') return CONTAINER_CC_FIXED_BIN
+  return dataplane === 'wrap' ? CONTAINER_CLI_NODE_BIN : CONTAINER_CC_NODE_BIN
+}
+
+export function nativeKernelFamily(dataplane) {
+  return dataplane === 'wrap-fixed' ? 'wrap' : dataplane === 'cc-fixed' ? 'cc' : dataplane
 }
 
 export function resolveKernelDataplane(vm, routing = {}) {
@@ -137,10 +150,12 @@ export function resolveKernelDataplane(vm, routing = {}) {
 
 export function parseKernelDataplanePatch(value) {
   if (value == null || value === '') return { ok: true, value: '' }
+  if (/^candidate[-_]/i.test(String(value).trim()))
+    return { ok: false, error: 'Candidate CLIs are only available in offline diagnostic settings' }
   const parsed = normalizeKernelDataplane(value, { inherit: true })
   if (!parsed) return { ok: true, value: '' }
   if (!KERNEL_DATAPLANES.includes(parsed)) {
-    return { ok: false, error: 'dataplane must be wrap, cc, or crag' }
+    return { ok: false, error: 'dataplane must be wrap, wrap-fixed, cc, cc-fixed, or crag' }
   }
   return { ok: true, value: parsed }
 }
@@ -337,7 +352,7 @@ export function validateInferenceRoutingPatch(body = {}) {
   if (Object.prototype.hasOwnProperty.call(body.inference, 'dataplane')) {
     const parsed = parseKernelDataplanePatch(body.inference.dataplane)
     if (!parsed.ok) errors.push(parsed.error)
-    else if (!parsed.value) errors.push('inference.dataplane 必须是 wrap、cc 或 crag')
+    else if (!parsed.value) errors.push('inference.dataplane 必须是 wrap、wrap-fixed、cc、cc-fixed 或 crag')
   }
   return errors
 }

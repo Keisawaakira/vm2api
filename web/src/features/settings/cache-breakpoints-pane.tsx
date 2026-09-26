@@ -36,7 +36,10 @@ export function CacheBreakpointsPane({
           <CardTitle className='text-sm'>缓存</CardTitle>
         </CardHeader>
         <CardContent>
-          <SettingRow label='TTL' desc='1h 按 2× 计费；5m 按 1.25×。'>
+          <SettingRow
+            label='默认 TTL'
+            desc='自动：OAuth / Setup Token 1h，API Key 5m。HTTP 仅补缺失 TTL；cli-hop 由 native CLI 按槽配置生成标记。费用按上游分项，缺失部分以 5m 估算。'
+          >
             <Select
               value={ttl}
               onValueChange={(v) =>
@@ -64,10 +67,9 @@ export function CacheBreakpointsPane({
         </CardHeader>
         <CardContent className='space-y-3'>
           <p className='text-xs leading-relaxed text-muted-foreground'>
-            Rust cli-hop 剥 tools / system / messages 上的 cache_control；kernel
-            按 Claude Code 重打 conversation 断点，wrap 与 crag
-            都走这条运输。官方入站跳过。关则只剥 last user，调用方其余
-            conversation 断点保留。
+            HTTP 保留显式 TTL 和合法的 1h → 5m 顺序，只修复后置 1h。wrap 与 crag
+            共用的 cli-hop 会清除入站缓存标记，最终前缀由所选内核/CLI
+            构建；此开关不关闭原生缓存。0 注入不代表不使用缓存。
           </p>
           <SettingRow label='启用'>
             <Switch

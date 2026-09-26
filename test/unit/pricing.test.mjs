@@ -80,7 +80,7 @@ test('Fable 5 official: $10 / $50', () => {
   assert.equal(c.total_cost, 2)
 })
 
-test('cache creation marked cache_ttl=1h bills the 1h list price', () => {
+test('requested 1h cannot classify an unreported cache split', () => {
   const c = calculateCost(
     {
       input_tokens: 0,
@@ -90,12 +90,14 @@ test('cache creation marked cache_ttl=1h bills the 1h list price', () => {
     },
     'claude-sonnet-5',
   )
-  assert.equal(c.cache_creation_1h_tokens, 1_000_000)
-  assert.equal(c.cache_creation_5m_tokens, 0)
-  assert.equal(c.cache_creation_cost, 4)
+  assert.equal(c.cache_creation_1h_tokens, null)
+  assert.equal(c.cache_creation_5m_tokens, null)
+  assert.equal(c.cache_creation_unclassified_tokens, 1_000_000)
+  assert.equal(c.cache_creation_estimated, true)
+  assert.equal(c.cache_creation_cost, 2.5)
 })
 
-test('cache creation without TTL breakdown bills as default 1h', () => {
+test('cache creation without split uses a labeled conservative estimate', () => {
   const c = calculateCost(
     {
       input_tokens: 0,
@@ -104,9 +106,10 @@ test('cache creation without TTL breakdown bills as default 1h', () => {
     },
     'claude-sonnet-5',
   )
-  assert.equal(c.cache_creation_1h_tokens, 1_000_000)
-  assert.equal(c.cache_creation_cost, 4)
-  assert.equal(c.total_cost, 4)
+  assert.equal(c.cache_creation_1h_tokens, null)
+  assert.equal(c.cache_creation_estimated, true)
+  assert.equal(c.cache_creation_cost, 2.5)
+  assert.equal(c.total_cost, 2.5)
 })
 
 test('OpenAI-shaped usage (prompt_tokens + details) bills like Anthropic', () => {

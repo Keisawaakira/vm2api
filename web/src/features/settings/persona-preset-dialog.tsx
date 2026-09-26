@@ -196,7 +196,7 @@ function ZeroFieldsForm({
               <Input
                 className='h-7 w-20 font-mono text-xs'
                 value={fields.agentCacheTtl}
-                placeholder='1h'
+                placeholder='自动'
                 aria-label='0注入 agent cache ttl'
                 onChange={(e) => patch({ agentCacheTtl: e.target.value })}
               />
@@ -208,7 +208,7 @@ function ZeroFieldsForm({
               onClick={() =>
                 patch({
                   agentText: ZERO_WIDTH_PLACEHOLDER,
-                  agentCacheTtl: '1h',
+                  agentCacheTtl: '',
                 })
               }
             >

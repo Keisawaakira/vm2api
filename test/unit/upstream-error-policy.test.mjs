@@ -107,6 +107,23 @@ test('committed incomplete stream never switches account', () => {
   assert.equal(policy.action, 'stop')
 })
 
+test('OAuth refresh decision cannot replay committed output after unit-policy integration', () => {
+  const result = {
+    ok: false,
+    status: 401,
+    terminalState: 'error',
+    body: { type: 'error', error: { type: 'authentication_error', message: 'Access token expired' } },
+  }
+  const pending = classifyUpstreamResult({ ...result, committed: false }, { hasRefresh: true })
+  assert.equal(pending.reason, 'oauth_refresh_required')
+  assert.equal(pending.decision.action, 'retry_same')
+  const delivered = classifyUpstreamResult({ ...result, committed: true }, { hasRefresh: true })
+  assert.equal(delivered.reason, 'oauth_refresh_required')
+  assert.equal(delivered.action, 'stop')
+  assert.equal(delivered.retrySameAccount, false)
+  assert.equal(delivered.decision.action, 'return')
+})
+
 test('transport proxy error rotates with proxy cooldown', () => {
   const policy = classifyUpstreamResult(
     {

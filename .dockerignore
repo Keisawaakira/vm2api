@@ -12,6 +12,17 @@ bin/*
 share/*
 !share/wrap-cli
 !share/wrap-cli/**
+!share/crag
+!share/crag/kin-kernel
+!share/offline-candidates
+!share/offline-candidates/**
+!share/wrap-fixed
+!share/wrap-fixed/**
+!share/cc-fixed
+!share/cc-fixed/**
+logs
+.pi-subagents
+CLIProxyAPI
 vms
 data
 .env

@@ -1,4 +1,50 @@
+export type RawDebug = {
+  offline_probe?: {
+    simulation: boolean
+    vm_id?: string
+    pairing?: string
+    kernel_sha256?: string
+    cli_sha256?: string
+    candidate?: {
+      id?: string
+      status?: string
+      production_approved: false
+      local_checks_completed: boolean
+      user_capture_accepted: false
+    }
+    phases?: Array<{
+      name: string
+      status: string
+      checks?: {
+        text_equal?: boolean
+        expected_characters?: number
+        actual_characters?: number | null
+      }
+    }>
+  }
+  status: string
+  inference_outcome?: string
+  diagnostic_outcome?: string
+  hops_observed: number
+  hops_omitted: number
+  truncated: boolean
+  hops: Array<{
+    hop_no: number
+    attempt_no: number
+    local_connect_attempt: number
+    source: string
+    outcome?: string
+    response?: {
+      format: string
+      read_complete: boolean
+      truncated: boolean
+    } | null
+  }>
+}
+
 export type RequestLogItem = {
+  raw_debug?: RawDebug
+  raw_debug_info?: { available: boolean; status: string }
   request_id?: string
   id?: string
   /** 后端字段是 `ts`（ISO 字符串，请求**完成**时刻）。`request_logs` 表没有 `created_at` 列。 */

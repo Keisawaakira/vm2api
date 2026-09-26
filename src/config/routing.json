@@ -92,7 +92,7 @@
     "persona_preset": "official_full",
     "overlay_preset": "off",
     "persona_park": false,
-    "cache_ttl": "1h"
+    "cache_ttl": "auto"
   },
   "official_cc": {
     "enabled": true,

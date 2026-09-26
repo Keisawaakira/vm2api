@@ -24,7 +24,7 @@ import {
   reloadSlotWorker,
   destroyVmRuntime,
 } from './vm-runtime.mjs'
-import { inspectWrapCliDir, materializeWrapCli, wrapCliHomeDir } from './wrap-cli-runtime.mjs'
+import { inspectSlotDataplane, materializeSlotDataplane, configuredSlotDataplane } from './wrap-cli-runtime.mjs'
 import { boundProxyUrl, isLocalEgressProxy } from './egress.mjs'
 
 export { runtimeKind }
@@ -101,6 +101,15 @@ function wrapUsesSlotKernel(wrap) {
   return wrap?.ok === true && (wrap.glibc_shim === true || wrap.wrapper === true || wrap.kernel_bin === true)
 }
 
+function installSelectedDataplane(projectRoot, vm, routing, ops = {}) {
+  const dataplane = configuredSlotDataplane(projectRoot, vm, routing)
+  if (ops.materializeSlotDataplane) return ops.materializeSlotDataplane(projectRoot, vm, dataplane)
+  // Preserve the existing test/lifecycle adapter for the original wrap family only.
+  if ((dataplane === 'wrap' || dataplane === 'cc') && ops.materializeWrapCli)
+    return ops.materializeWrapCli(projectRoot, vm)
+  return materializeSlotDataplane(projectRoot, vm, dataplane)
+}
+
 export async function ensureSlotInferenceRuntime(vm, projectRoot, opts = {}) {
   const routing = opts.routing || {}
   const eager = routing?.inference?.eager_start !== false
@@ -132,10 +141,10 @@ export async function ensureSlotInferenceRuntime(vm, projectRoot, opts = {}) {
     return { ok: true, skipped: true, reason: 'no_credential', engine: 'rust' }
   }
   if (runtimeKind(vm) === RUNTIME_KVM) return kvmRefuse('ensure-rust')
-  const dest = wrapCliHomeDir(projectRoot, vm.id)
-  let wrap = inspectWrapCliDir(dest)
+  const dataplane = configuredSlotDataplane(projectRoot, vm, opts.routing)
+  let wrap = inspectSlotDataplane(projectRoot, vm, dataplane)
   if (!wrap?.ok) {
-    wrap = (opts.ops?.materializeWrapCli || materializeWrapCli)(projectRoot, vm)
+    wrap = installSelectedDataplane(projectRoot, vm, opts.routing, opts.ops)
   }
   if (!wrap?.ok) {
     return {
@@ -217,7 +226,12 @@ function kernelBinaryError(bin) {
  * deliberately left to the caller so configuration is committed only after
  * the target runtime is healthy.
  */
-export async function switchSlotInferenceEngine(vm, projectRoot, engine, { timeoutMs = 8000, ops = {} } = {}) {
+export async function switchSlotInferenceEngine(
+  vm,
+  projectRoot,
+  engine,
+  { timeoutMs = 8000, ops = {}, routing = ops.routing } = {},
+) {
   if (!vm?.id || !projectRoot) return { ok: false, code: 'vm_required', error: 'vm required' }
   if (isCodexVm(vm)) {
     return { ok: false, code: 'gpt_engine_forbidden', error: 'GPT slots do not use rust inference engines' }
@@ -237,7 +251,7 @@ export async function switchSlotInferenceEngine(vm, projectRoot, engine, { timeo
   const kernelBin = (ops.kernelBinPath || kernelBinPath)()
   let wrap = null
   if (engine === 'rust') {
-    wrap = (ops.materializeWrapCli || materializeWrapCli)(projectRoot, vm)
+    wrap = installSelectedDataplane(projectRoot, vm, routing, ops)
     if (!wrap?.ok) {
       return {
         ok: false,
@@ -250,13 +264,17 @@ export async function switchSlotInferenceEngine(vm, projectRoot, engine, { timeo
       if (binaryError) return binaryError
     }
     const writeConfig = ops.writeKernelConfig || writeKernelConfig
-    writeConfig(projectRoot, vm, { routing: ops.routing })
+    writeConfig(projectRoot, vm, { routing })
   }
 
   const name = containerName(vm.id)
   const existing = inspect(name)
   const needsKernelMount = engine === 'rust' && !!existing && !hasKernelMount(name) && !wrapUsesSlotKernel(wrap)
-  const boot = needsKernelMount ? start(vm, projectRoot, { recreate: true }) : reload(vm, projectRoot)
+  const boot = needsKernelMount
+    ? start(vm, projectRoot, { recreate: true, ...(routing === undefined ? {} : { routing }) })
+    : routing === undefined
+      ? reload(vm, projectRoot)
+      : reload(vm, projectRoot, { routing })
   if (!boot?.ok) {
     return {
       ok: false,

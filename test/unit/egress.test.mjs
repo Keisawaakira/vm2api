@@ -1,5 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import childProcess from 'node:child_process'
+import { syncBuiltinESMExports } from 'node:module'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -136,20 +138,36 @@ test('dns primary puts the chosen upstream first and keeps the rest as fallback'
   assert.equal(validDnsPrimary('9.9.9.9:53'), false)
 })
 
-test('egress config carries dns_upstream only when configured', () => {
+test('egress config carries dns_upstream only when configured', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'egress-dns-'))
+  // Verify actual config serialization without requiring /bin/true or starting a process.
+  const calls = []
+  const spawn = t.mock.method(childProcess, 'spawn', (bin, args) => {
+    calls.push({ bin, args })
+    return { pid: 1000000 + calls.length, unref() {} }
+  })
+  syncBuiltinESMExports()
+  t.after(() => {
+    spawn.mock.restore()
+    syncBuiltinESMExports()
+    fs.rmSync(root, { recursive: true, force: true })
+  })
   const base = {
     projectRoot: root,
     proxyUrl: 'socks5h://127.0.0.1:1',
     tcpPort: 20000,
     dnsPort: 20001,
     listenHost: '127.0.0.1',
-    bin: '/bin/true',
+    bin: process.execPath,
   }
   const a = startEgressProcess({ ...base, proxyId: 'px-a', dnsUpstream: '' })
   assert.equal(a.ok, true)
   assert.equal(JSON.parse(fs.readFileSync(a.configPath, 'utf8')).dns_upstream, undefined)
   const b = startEgressProcess({ ...base, proxyId: 'px-b', dnsUpstream: '8.8.8.8:53,1.1.1.1:53' })
+  assert.equal(b.ok, true)
   assert.equal(JSON.parse(fs.readFileSync(b.configPath, 'utf8')).dns_upstream, '8.8.8.8:53,1.1.1.1:53')
-  fs.rmSync(root, { recursive: true, force: true })
+  assert.deepEqual(calls, [
+    { bin: process.execPath, args: ['-config', a.configPath] },
+    { bin: process.execPath, args: ['-config', b.configPath] },
+  ])
 })

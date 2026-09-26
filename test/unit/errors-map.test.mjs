@@ -9,10 +9,25 @@ import {
   isAssistantMessageBody,
   isCompleteAssistantMessage,
   isIncompleteAssistantMessage,
+  isClientCancelledResult,
+  clientCancelledResult,
   finalizeAssembledAssistantHop,
   mergeAssembledAssistantHop,
   CLIENT_POOL_BUSY_MESSAGE,
 } from '../../src/lib/core/errors.mjs'
+
+test('client lifecycle is explicit, not inferred from an upstream cancelled terminal or transport text', () => {
+  assert.equal(isClientCancelledResult({ terminalState: 'cancelled' }), false)
+  assert.equal(
+    isClientCancelledResult({ body: { error: { code: 'ECONNRESET', message: 'upstream context canceled' } } }),
+    false,
+  )
+  const cancelled = clientCancelledResult({ committed: true, usage: { output_tokens: 9 } })
+  assert.equal(isClientCancelledResult(cancelled), true)
+  assert.equal(cancelled.status, 499)
+  assert.equal(cancelled.committed, true)
+  assert.deepEqual(cancelled.usage, { output_tokens: 9 })
+})
 
 test('pool-empty codes rewrite to a generic overload for the client', () => {
   const mapped = mapUpstreamError(503, {

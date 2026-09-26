@@ -101,7 +101,7 @@ test('official preset keeps caller agent and leftover system separate', () => {
   const out = renderPersonaTemplate(DEFAULT_PERSONA_TEMPLATES.official, vars)
   assert.equal(out.length, 4)
   assert.equal(out[2].text, 'You are an interactive agent that helps users with software engineering tasks.')
-  assert.deepEqual(out[2].cache_control, { type: 'ephemeral', ttl: '1h', scope: 'global' })
+  assert.deepEqual(out[2].cache_control, { type: 'ephemeral', scope: 'global' })
   assert.deepEqual(out[3], { type: 'text', text: '你是一个高速收费员。' })
 })
 
@@ -110,10 +110,10 @@ test('official_full preset renders the complete agent prompt separately', () => 
   const out = renderPersonaTemplate(DEFAULT_PERSONA_TEMPLATES.official_full, vars)
   assert.equal(out.length, 4)
   assert.equal(out[2].text, vars.agent_official)
-  assert.deepEqual(out[2].cache_control, { type: 'ephemeral', ttl: '1h', scope: 'global' })
+  assert.deepEqual(out[2].cache_control, { type: 'ephemeral', scope: 'global' })
   assert.equal(typeof out[3].text, 'string')
   assert.match(out[3].text, /# Environment|# Text output/)
-  assert.deepEqual(out[3].cache_control, { type: 'ephemeral', ttl: '1h' })
+  assert.deepEqual(out[3].cache_control, { type: 'ephemeral' })
 })
 test('zero preset billing line is byte-identical to buildZeroBillingText', () => {
   const env = { timezone: 'Asia/Tokyo' }
@@ -123,7 +123,7 @@ test('zero preset billing line is byte-identical to buildZeroBillingText', () =>
   assert.equal(out[0].text, buildZeroBillingText('ping', '2.1.280', 's-2'))
   assert.equal(out[1].text, CRS_EMPTY_IDENTITY_TEXT)
   assert.equal(out[2].text, CRS_EMPTY_IDENTITY_TEXT)
-  assert.deepEqual(out[2].cache_control, { type: 'ephemeral', ttl: '1h' })
+  assert.deepEqual(out[2].cache_control, { type: 'ephemeral' })
 })
 
 test('zero prompt_version uses the compact Anthropic Claude identity', () => {
@@ -358,6 +358,7 @@ test('PUT routing accepts official_full and empty follow-preset templates', () =
 })
 
 test('PUT routing accepts only 5m and 1h cache TTL values', () => {
+  assert.deepEqual(validatePersonaRoutingPatch({ compatibility: { cache_ttl: 'auto' } }), [])
   assert.deepEqual(validatePersonaRoutingPatch({ compatibility: { cache_ttl: '5m' } }), [])
   assert.deepEqual(validatePersonaRoutingPatch({ compatibility: { cache_ttl: '1h' } }), [])
   assert.match(validatePersonaRoutingPatch({ compatibility: { cache_ttl: '60m' } })[0], /5m \/ 1h/)

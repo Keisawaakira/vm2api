@@ -22,7 +22,8 @@ import { resolveStoreDb } from '../db/database.mjs'
 import { UsageLogsRepo } from '../db/repos/usage-logs-repo.mjs'
 import { classifyRequestError, resolveMutedErrorClasses } from './error-class.mjs'
 import { costColumnsFromUsage, normalizeUsage } from './pricing.mjs'
-import { normalizeCacheTtl } from '../protocol/cache-ttl.mjs'
+import { cacheCreationUsage } from '../protocol/cache-usage.mjs'
+import { RAW_EXPORT_BYTES } from './raw-debug.mjs'
 
 /** Persist the token a client actually sent — only for failed ingress auth. */
 export function presentedApiKeyForLog(token) {
@@ -62,6 +63,11 @@ export function normalizeLoggingConfig(raw = {}) {
   return {
     ...raw,
     mode,
+    raw_nonstream_debug: raw.raw_nonstream_debug === true,
+    offline_kernel_probe: raw.offline_kernel_probe === true,
+    offline_kernel_dataplane: String(raw.offline_kernel_dataplane || 'current')
+      .trim()
+      .toLowerCase(),
     retain_days: retainDays,
     debug_retain_days: debugRetainDays,
     max_mb: clampInt(raw.max_mb ?? raw.maxMb, 0, 102400, DEFAULT_MAX_MB),
@@ -102,28 +108,9 @@ function summarizeBody(body) {
   }
 }
 
-/**
- * Cache-creation TTL breakdown, normalized like Sub2API:
- * prefer usage.cache_creation.ephemeral_5m/1h; when the breakdown is absent
- * but cache_creation_input_tokens > 0, attribute everything to the resolved TTL
- * (default 1h).
- */
+/** Preserve observed buckets; missing split stays unknown, including in storage. */
 function cacheCreationBreakdown(usage) {
-  if (!usage || typeof usage !== 'object') {
-    return { cache_creation_5m_tokens: null, cache_creation_1h_tokens: null }
-  }
-  const nested = usage.cache_creation
-  let five = Number(nested?.ephemeral_5m_input_tokens) || 0
-  let hour = Number(nested?.ephemeral_1h_input_tokens) || 0
-  const total = Number(usage.cache_creation_input_tokens ?? usage.cache_creation_tokens) || 0
-  if (five === 0 && hour === 0 && total > 0) {
-    if (normalizeCacheTtl(usage.cache_ttl) === '1h') hour = total
-    else five = total
-  }
-  if (five === 0 && hour === 0) {
-    return { cache_creation_5m_tokens: null, cache_creation_1h_tokens: null }
-  }
-  return { cache_creation_5m_tokens: five, cache_creation_1h_tokens: hour }
+  return cacheCreationUsage(usage || {})
 }
 
 /** Tri-state model mismatch: null = upstream did not declare a model. */
@@ -252,6 +239,9 @@ export class RequestLogStore {
     debugRetainDays = Number(process.env.KIN_REQUEST_LOG_DEBUG_RETAIN_DAYS || DEFAULT_DEBUG_RETAIN_DAYS),
     maxMb = Number(process.env.KIN_REQUEST_LOG_MAX_MB || DEFAULT_MAX_MB),
     jsonlMirror = process.env.KIN_REQUEST_LOG_JSONL === '1',
+    rawNonstreamDebug = false,
+    offlineKernelProbe = false,
+    offlineKernelDataplane = 'current',
   } = {}) {
     this.dataDir = dataDir || path.join(process.cwd(), 'data')
     this.db = resolveStoreDb({ db, dataDir: this.dataDir })
@@ -265,13 +255,33 @@ export class RequestLogStore {
     if (this.debugRetainDays > this.retainDays) this.debugRetainDays = this.retainDays
     this.maxMb = Number.isFinite(maxMb) && maxMb >= 0 ? maxMb : DEFAULT_MAX_MB
     this.jsonlMirror = !!jsonlMirror
+    this.rawNonstreamDebug = rawNonstreamDebug === true
+    this.offlineKernelProbe = offlineKernelProbe === true
+    this.offlineKernelDataplane = String(offlineKernelDataplane || 'current')
+      .trim()
+      .toLowerCase()
     this.mutedErrorClasses = resolveMutedErrorClasses(null)
     this._mem = [] // recent normal summaries for panel hot path
     this._memMax = 200
     this._cleanupTimer = null
   }
 
-  setConfig({ mode, retainDays, debugRetainDays, maxMb, mutedErrorClasses } = {}) {
+  setConfig({
+    mode,
+    retainDays,
+    debugRetainDays,
+    maxMb,
+    mutedErrorClasses,
+    rawNonstreamDebug,
+    offlineKernelProbe,
+    offlineKernelDataplane,
+  } = {}) {
+    if (rawNonstreamDebug !== undefined) this.rawNonstreamDebug = rawNonstreamDebug === true
+    if (offlineKernelProbe !== undefined) this.offlineKernelProbe = offlineKernelProbe === true
+    if (offlineKernelDataplane !== undefined)
+      this.offlineKernelDataplane = String(offlineKernelDataplane || 'current')
+        .trim()
+        .toLowerCase()
     if (mode != null) {
       const m = String(mode).trim().toLowerCase()
       if (MODES.has(m)) this.mode = m
@@ -404,7 +414,20 @@ export class RequestLogStore {
     this._mem.push(summary)
     if (this._mem.length > this._memMax) this._mem = this._mem.slice(-this._memMax)
 
-    if (ctx.mode === 'debug') {
+    if (ctx.mode === 'debug' && extra.raw_debug) {
+      // Raw-enrolled bodies/derived views have exactly one protected home, never the legacy previews.
+      const record = {
+        ...summary,
+        caller_request_id: ctx.caller_request_id || null,
+        raw_debug_info: extra.raw_debug_info,
+        raw_debug: extra.raw_debug,
+      }
+      try {
+        this.repo.insertDebugIfAbsent(summary.request_id, summary.ts, record)
+      } catch {
+        console.warn(`[raw-debug] request=${summary.request_id} code=persist_failed`)
+      }
+    } else if (ctx.mode === 'debug') {
       const debugRec = {
         ...summary,
         headers: ctx.headers,
@@ -472,6 +495,16 @@ export class RequestLogStore {
     return this.queryNormal({ ...opts, limit, offset: 0, maxLimit: 5000 })
   }
 
+  exportRawRows(opts = {}) {
+    const { items, total } = this.exportRows(opts)
+    const selection = this.repo.selectRawExport(
+      items.map((item) => item.request_id),
+      RAW_EXPORT_BYTES,
+    )
+    if (opts.request_id && total === 0) selection.unavailable++
+    return { ...selection, total, rowLimited: Math.max(0, total - items.length) }
+  }
+
   /** Aggregated stats for charts. */
   aggregate(opts = {}) {
     return this.repo.aggregate(opts)
@@ -512,17 +545,18 @@ export class RequestLogStore {
     return items.slice(0, n)
   }
 
-  getDebug(requestId, { owner_user_id = null } = {}) {
+  getDebug(requestId, { owner_user_id = null, includeRaw = false } = {}) {
     if (!requestId) return null
-    const rec = this.repo.getDebug(requestId) || this.repo.getByRequestId(requestId)
-    if (!rec) return null
     if (owner_user_id && !this.repo.belongsToOwner(requestId, owner_user_id)) return null
-    return rec
+    return this.repo.getDebug(requestId, { includeRaw }) || this.repo.getByRequestId(requestId)
   }
 
   snapshot() {
     return {
       mode: this.mode,
+      raw_nonstream_debug: this.rawNonstreamDebug,
+      offline_kernel_probe: this.offlineKernelProbe,
+      offline_kernel_dataplane: this.offlineKernelDataplane,
       retain_days: this.retainDays,
       debug_retain_days: this.debugRetainDays,
       max_mb: this.maxMb,

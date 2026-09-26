@@ -1,5 +1,6 @@
 import { queryOptions } from '@tanstack/react-query'
 import { api } from '@/lib/api'
+import type { KernelDataplane } from '@/features/vm/dataplane-contract'
 
 export type WrapSampleMeta = {
   source?: string
@@ -18,6 +19,15 @@ export type WrapKernelPayload = {
   mtime?: string
 }
 
+export type FixedKernelPayload = {
+  ok: boolean
+  id?: string
+  error?: string
+  production_approved?: boolean
+  cli?: WrapKernelPayload & { sha256?: string }
+  kernel?: WrapKernelPayload & { sha256?: string }
+}
+
 export type WrapSample = {
   ok: boolean
   dir?: string
@@ -31,7 +41,9 @@ export type WrapSample = {
   cli_node?: WrapKernelPayload | null
   cc_node?: WrapKernelPayload | null
   crag?: (WrapKernelPayload & { ok?: boolean }) | null
-  dataplane?: 'wrap' | 'cc' | 'crag'
+  dataplane?: KernelDataplane
+  wrap_fixed?: FixedKernelPayload
+  cc_fixed?: FixedKernelPayload
   written?: string[]
   sample_ok?: boolean
 }
@@ -139,12 +151,12 @@ export function uploadCragKernelBinary(file: Blob) {
 }
 
 export function setKernelDataplane(body: {
-  dataplane: 'wrap' | 'cc' | 'crag'
+  dataplane: KernelDataplane
   ids?: string[]
   all?: boolean
   restart?: boolean
 }) {
-  return api<WrapSyncReport & { dataplane?: 'wrap' | 'cc' | 'crag' }>(
+  return api<WrapSyncReport & { dataplane?: KernelDataplane }>(
     '/api/panel/dataplane',
     {
       method: 'POST',

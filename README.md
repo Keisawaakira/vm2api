@@ -38,24 +38,27 @@
 
 ### Docker Compose（推荐）
 
-生产就用这条。**拉预构建镜像，不在服务器上构建**；安装目录任意。
+本 fork 默认从 **`Keisawaakira/vm2api` 的 `main` 拉源码并在部署机构建**，不依赖上游预构建镜像；安装目录任意。Windows 本地改动需先推送 fork，再在 WSL 更新，详见 [Fork / WSL 部署](docs/DEPLOY.md#fork--wsl-更新本次修复)。
 
 **一键安装 / 更新**（保留已有非空 `.env` 字段 / `vms/` / `data/`，不 `docker rm` 槽）。空密码默认 **`admin` / `123456`**，登录 `http://<ip>:8787/cc#/login`。
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash
-# 以后更新
-curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash -s -- upgrade
+curl -fsSL https://raw.githubusercontent.com/Keisawaakira/vm2api/main/deploy/install.sh -o /tmp/vm2api-install.sh
+sudo bash /tmp/vm2api-install.sh install
+# 以后更新：重新下载上面的脚本，再执行
+sudo bash /tmp/vm2api-install.sh upgrade
 sudo bash /opt/vm2api/deploy/install.sh check
 ```
 
-管理台 **设置 → 关于** 会对照 GitHub Release，并给出同一条命令。
+管理台 **设置 → 关于** 仍对照上游 GitHub Release；fork 分支更新请用上述脚本，不要使用管理台的上游更新命令。
 
 **运行形态（不是一个父容器里一堆子进程）：**
 
 - Compose **只起 1 个** `vm2api` 控制面（面板、`/v1`、调度）
 - 每个**已启动**的槽另起 1 个宿主机容器 `kin-<槽>`（独立家目录 / 出口 / 指纹 / 遥测）
 - 未启动的槽不占容器。`docker ps` 里其它名字是同机别的项目，不是 vm2api
+
+**以下为上游预构建镜像示例，不包含本 fork 的修复：**
 
 ```bash
 mkdir -p /opt/vm2api && cd /opt/vm2api
@@ -70,7 +73,7 @@ curl -sS --noproxy '*' http://127.0.0.1:8787/health
 
 镜像自带 `bin/kin-{kernel,egress,worker,codex-kernel,cookie-auth}` 与 `share/wrap-cli`，入口写进挂载目录，**服务器上不编 Rust/Go/前端**。槽位 OS 镜像先 `docker pull ghcr.io/dofastted/kin-os-*`，拉不到时建槽阶段兜底构建。槽 UID 是 `10000+序号`，`bin/kin-*` 必须 **755**。
 
-改代码自己构建：`docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build`（一键脚本用 `--from-source`）。
+fork 手动构建：`docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build`（fork 一键脚本默认此模式）。
 
 
 

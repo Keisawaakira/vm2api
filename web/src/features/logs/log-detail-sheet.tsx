@@ -17,11 +17,14 @@ import { SlotIdentity } from '@/components/platform-chip'
 import { QueryGate } from '@/components/query-gate'
 import { StatusMark } from '@/components/status-mark'
 import { LatencyBreakdownBar } from '@/features/logs/latency-breakdown-bar'
+import { RawDebugPanel } from './raw-debug-panel'
 
 const SECRET_KEY =
   /access_token|refresh_token|session_key|password|secret|authorization|cookie|master_key|api_key|proxy_url|oauth/i
 
 const SKIP_DUMP_KEYS: Record<string, true> = {
+  raw_debug: true,
+  raw_debug_info: true,
   request_body_snapshot: true,
   inbound_summary: true,
   headers: true,
@@ -109,8 +112,10 @@ export function LogDetailSheet({
   loading,
   error,
   onOpenChange,
+  isAdmin = false,
 }: {
   open: boolean
+  isAdmin?: boolean
   requestId: string
   item?: RequestLogItem
   attempts: RequestAttempt[]
@@ -171,6 +176,9 @@ export function LogDetailSheet({
                 <PerformanceTab item={item} />
               </TabsContent>
             </Tabs>
+            {isAdmin && open && requestId ? (
+              <RawDebugPanel key={requestId} requestId={requestId} />
+            ) : null}
           </QueryGate>
         </div>
       </SheetContent>
@@ -215,6 +223,23 @@ function SummaryTab({
   pushPresent(rows, '缓存写', item.cache_creation_tokens, fmtNum)
   pushPresent(rows, '缓存写 5m', item.cache_creation_5m_tokens, fmtNum)
   pushPresent(rows, '缓存写 1h', item.cache_creation_1h_tokens, fmtNum)
+  const unclassified = Math.max(
+    0,
+    Number(item.cache_creation_tokens || 0) -
+      Number(item.cache_creation_5m_tokens || 0) -
+      Number(item.cache_creation_1h_tokens || 0)
+  )
+  if (
+    unclassified > 0 &&
+    /^(?:claude-)?(?:opus|sonnet|haiku|fable|mythos)/.test(
+      String(item.pricing_model || item.upstream_model || item.model || '')
+    )
+  ) {
+    rows.push([
+      '缓存 TTL 未知',
+      `${fmtNum(unclassified)} token；写入费用按 5m 估算，非上游 TTL 分项`,
+    ])
+  }
   rows.push(['结束原因', dash(item.stop_reason)])
   rows.push([
     '账号',

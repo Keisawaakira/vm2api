@@ -305,8 +305,8 @@ export function validatePersonaRoutingPatch(body = {}) {
   if (compat.persona_standing != null && String(compat.persona_standing).length > PERSONA_STANDING_MAX) {
     problems.push(`persona_standing 超过 ${PERSONA_STANDING_MAX} 字符`)
   }
-  if (compat.cache_ttl != null && !['5m', '1h'].includes(String(compat.cache_ttl).trim())) {
-    problems.push(`cache_ttl 必须是 5m / 1h，收到 ${compat.cache_ttl}`)
+  if (compat.cache_ttl != null && !['auto', '5m', '1h'].includes(String(compat.cache_ttl).trim())) {
+    problems.push(`cache_ttl 必须是 auto / 5m / 1h，收到 ${compat.cache_ttl}`)
   }
   if (compat.cache_breakpoints != null) {
     const bp = compat.cache_breakpoints

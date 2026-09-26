@@ -11,7 +11,7 @@ import { defaultSeedPolicy } from '../protocol/seed-policy.mjs'
 import { writeSlotSeedFiles } from './slot-seed.mjs'
 import { manualScheduleLevelOf } from '../pool/credential-weight.mjs'
 import { stampVmKind } from './vm-kind.mjs'
-import { materializeWrapCli } from './wrap-cli-runtime.mjs'
+import { materializeSlotDataplane } from './wrap-cli-runtime.mjs'
 import { listVms } from './vm-registry.mjs'
 import {
   applyGeneratedFingerprint,
@@ -35,7 +35,7 @@ export function wipeSlotHome(projectRoot, id) {
 export function seedFreshCliHome(projectRoot, vm) {
   const written = writeSlotSeedFiles(projectRoot, vm)
   try {
-    materializeWrapCli(projectRoot, vm)
+    materializeSlotDataplane(projectRoot, vm)
   } catch {}
   return { homeDir: written.homeDir, seed_policy: written.seed_policy || defaultSeedPolicy(vm.seed_policy || {}) }
 }
@@ -89,6 +89,7 @@ export function buildRecreatedVmRecord(prev, generated) {
     proxy_required: prev.proxy_required,
     ...(prev.inference_engine ? { inference_engine: prev.inference_engine } : {}),
     ...(prev.persona_preset ? { persona_preset: prev.persona_preset } : {}),
+    ...(prev.dataplane ? { dataplane: prev.dataplane } : {}),
   }
   stampVmKind(next, prev)
   return next

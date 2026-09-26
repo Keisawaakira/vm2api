@@ -72,11 +72,11 @@ export const DEFAULT_PERSONA_TEMPLATES = Object.freeze({
     }),
     Object.freeze({
       id: 'caller_agent',
-      note: '仅当调用方自带 agent prompt 时占官方 agent 槽位，空则整块丢弃。2.1.263 起 1h global',
+      note: '仅当调用方自带 agent prompt 时占官方 agent 槽位，空则整块丢弃。TTL 跟随缓存策略',
       drop_if_empty: true,
       type: 'text',
       text: '{{caller_agent}}',
-      cache_control: Object.freeze({ type: 'ephemeral', ttl: '1h', scope: 'global' }),
+      cache_control: Object.freeze({ type: 'ephemeral', scope: 'global' }),
     }),
     Object.freeze({
       id: 'caller_system',
@@ -101,17 +101,17 @@ export const DEFAULT_PERSONA_TEMPLATES = Object.freeze({
     }),
     Object.freeze({
       id: 'agent_official',
-      note: '官方 Claude Code 基础提示词全文。2.1.263 起 1h global 缓存',
+      note: '官方 Claude Code 基础提示词全文。TTL 跟随缓存策略',
       type: 'text',
       text: '{{agent_official}}',
-      cache_control: Object.freeze({ type: 'ephemeral', ttl: '1h', scope: 'global' }),
+      cache_control: Object.freeze({ type: 'ephemeral', scope: 'global' }),
     }),
     Object.freeze({
       id: 'env_official',
-      note: '官方 continuation + Environment。2.1.263 起 1h 缓存，无 scope',
+      note: '官方 continuation + Environment。TTL 跟随缓存策略，无 scope',
       type: 'text',
       text: '{{env_official}}',
-      cache_control: Object.freeze({ type: 'ephemeral', ttl: '1h' }),
+      cache_control: Object.freeze({ type: 'ephemeral' }),
     }),
     Object.freeze({
       id: 'caller_system',
@@ -138,11 +138,11 @@ export const DEFAULT_PERSONA_TEMPLATES = Object.freeze({
     }),
     Object.freeze({
       id: 'agent_slot',
-      note: '与 official_full 第 3 块同槽：占 1h 缓存断点，不写 agent 全文',
+      note: '与 official_full 第 3 块同槽：保留缓存断点，TTL 跟随缓存策略，不写 agent 全文',
       hide: true,
       type: 'text',
       text: '\u200b',
-      cache_control: Object.freeze({ type: 'ephemeral', ttl: '1h' }),
+      cache_control: Object.freeze({ type: 'ephemeral' }),
     }),
     Object.freeze({
       id: 'caller_system',

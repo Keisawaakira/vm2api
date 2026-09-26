@@ -668,6 +668,27 @@ test('writeKernelConfig separates container paths from host socket paths', () =>
   fs.rmSync(root, { recursive: true, force: true })
 })
 
+test('writeKernelConfig auto TTL follows selected credentials, not a previous slot default', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-kernel-ttl-'))
+  try {
+    for (const [type, ttl] of [
+      ['oauth', '1h'],
+      ['apikey', '5m'],
+      ['setup-token', '1h'],
+    ]) {
+      const written = writeKernelConfig(
+        root,
+        { id: 'vm-05', claude: { type } },
+        { token: 'tok', routing: { compatibility: { cache_ttl: 'auto' } } },
+      )
+      const doc = JSON.parse(fs.readFileSync(written.configPath, 'utf8'))
+      assert.equal(doc.default_cache_ttl, ttl)
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('writeKernelConfig cli-hop writes local_cli without secrets', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-kernel-cli-hop-cfg-'))
   const written = writeKernelConfig(

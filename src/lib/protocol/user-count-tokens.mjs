@@ -181,6 +181,15 @@ export function blockCountTokensBeforeHop(req, inbound, deps = {}) {
 export async function handleUserCountTokens(req, res, deps) {
   const json = (...args) => deps.json(...args)
   if (!deps.requireAuth(req, res)) return
+  if (deps.offlineKernelProbe === true)
+    return json(res, 422, {
+      error: {
+        type: 'offline_diagnostic',
+        code: 'offline_probe_only',
+        message:
+          'Offline mode only accepts master-key Claude Chat stream:false probes; count_tokens was not sent upstream.',
+      },
+    })
   let inbound
   try {
     inbound = await deps.readBody(req, deps.cfg.limits.max_body_bytes)

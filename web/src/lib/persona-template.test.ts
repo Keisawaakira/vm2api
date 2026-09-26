@@ -54,7 +54,6 @@ describe('persona template contract', () => {
     ).toEqual([true, true, true, false])
     expect(DEFAULT_PERSONA_TEMPLATES.zero[2]?.cache_control).toEqual({
       type: 'ephemeral',
-      ttl: '1h',
     })
     expect(DEFAULT_PERSONA_TEMPLATES.custom).toEqual([])
   })

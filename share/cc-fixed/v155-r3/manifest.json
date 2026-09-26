@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "id": "cc-fixed-v155-r3",
+  "status": "owner_approved",
+  "production_approved": true,
+  "dataplane": "cc-fixed",
+  "approval": {
+    "date": "2026-09-26",
+    "basis": "owner conditionally permits promotion after supplied CC request/response comparison; CC accepted, Crag rejected",
+    "candidate_capture_sha256": "50114bcc6a954c43992fe6444bb25f711f98f82c62f8f023ccc3e813a52fb397",
+    "scope": "one zero/Opus4.6/text-only/nonstream case with245 messages; no real-provider/quota/concurrency validation",
+    "preserved_cc_differences": {
+      "context_management": { "edits": [{ "type": "clear_thinking_20251015", "keep": "all" }] },
+      "attribution_fields": { "cc_version": "2.1.280.104", "cc_is_subagent": "true", "cc_turn_origin": "sdk" },
+      "scope": "Native CC behavior retained, not introduced by the repair; real quota/provider effects unverified"
+    }
+  },
+  "kernel": {
+    "file": "kin-kernel.bin",
+    "bytes": 12446608,
+    "sha256": "c44eae87aec7c537196513cc78d6e7e7c0c14b20bdc6c15eb7c0a5a68e1658a0"
+  },
+  "artifacts": {
+    "cc-node": {
+      "file": "cc-node",
+      "bytes": 27157976,
+      "sha256": "0e9744c49ce5971eafe4e5864cdbcdff77838343ceaba2727f55812a5265e7fd",
+      "unpacked_bytes": 111048832,
+      "unpacked_sha256": "92a701f08ed5c9c633ebc3b9f4873adb93d257a8ae95527651b81eaad03039f9",
+      "source_packed_sha256": "be5eec49a78345dd935e302e88c9d7ad0afbb09a195356d81be1bdea766f3960",
+      "source_unpacked_sha256": "393230977c79d4cb89f0251ddcf5fd1151c30a73536f7feac984900605e5e832",
+      "source_candidate_sha256": "71010c5bbef4c95965e35add11ab619b19516e9310df39772d128eba0ad345cc",
+      "source_candidate_unpacked_sha256": "21e5413d577fbcf22adeb9e9f34df2b07b16ae8275711ca1eb0912613ea59804",
+      "validations": {
+        "elf_graph": true,
+        "no_bytecode": true,
+        "unchanged_outside_js_spans": true,
+        "syntax": {
+          "syntax": true,
+          "imports": 749,
+          "exports": 0
+        },
+        "upx_integrity": true,
+        "exact_unpack_roundtrip": true,
+        "only_entry_guard_changed_from_accepted_candidate": true
+      },
+      "patches": [
+        {
+          "id": "connect-existing-api-debug-bindings",
+          "offset": 96908227,
+          "bytes": 8548,
+          "replacement_bytes": 7070,
+          "before_sha256": "75df7c043da333c2ae02d8e1cd5122c6844de3db88625f1e7064d83a1a95d9e3",
+          "after_sha256": "a5455ba9ebef2a57623ba96dedb6fe145c4ba4cb997ce4ebe47728a636a84a26"
+        },
+        {
+          "id": "connect-existing-workload-context",
+          "offset": 96982222,
+          "bytes": 2528,
+          "replacement_bytes": 2097,
+          "before_sha256": "dfba0d5a901a434868ffb77a7c111c5100d21efdf5fb35584e40a64eb75eff9f",
+          "after_sha256": "e744af64e1f04c513f0f14ef487dc58c931ff3f4826d5758b5a0428aa242691e"
+        },
+        {
+          "id": "snapshot-caller-system",
+          "offset": 108508497,
+          "bytes": 1274,
+          "replacement_bytes": 999,
+          "before_sha256": "ce0ddb2f29b0b2850a95202571ffd74125fc2722c28a5973b8c53b482018c05f",
+          "after_sha256": "55a762b86b5d62c52150ef1cecdd84f2d349360f0bb33fee7b651a7d98ce6054"
+        },
+        {
+          "id": "preserve-caller-api-blocks",
+          "offset": 108520509,
+          "bytes": 2072,
+          "replacement_bytes": 2023,
+          "before_sha256": "b378a62d9584f035ce0d446736fe23fe63949bfd5beed6be02cd899e8cd91007",
+          "after_sha256": "94e6a344ec20c2b8139183e18fa6ed486908f3b2eb51829bd7abc989f908b945"
+        },
+        {
+          "id": "preserve-crag-api-error-detail",
+          "offset": 108588034,
+          "bytes": 2149,
+          "replacement_bytes": 1828,
+          "before_sha256": "c0f7b1ff2cf4805215a357fc71d995461ed576b187af747f06e934cf795a34ff",
+          "after_sha256": "7efee0ef910656a37f2d11e6e7e09bd60a2b269d5604faed192e8ae9769a796c"
+        },
+        {
+          "id": "cc-loop-initialization",
+          "offset": 111000022,
+          "bytes": 3620,
+          "replacement_bytes": 3282,
+          "before_sha256": "9c1d01a6251d9460926719a6d7035e9c2805a475e2ccb4211ea6915b183512bd",
+          "after_sha256": "ea6bee1b63e4053a5426cb237531a55cc7d32f7d6345340032ec2eed6757525d"
+        }
+      ]
+    }
+  },
+  "entry": {
+    "offset": 111000022,
+    "bytes": 3620,
+    "guard_offset": 111000045,
+    "guard_bytes": 183,
+    "candidate": "async function main2(){if(process.env.VM2API_OFFLINE_CANDIDATE!==\"native-v155-r3\"||!/^http:\\/\\/127\\.0\\.0\\.1:\\d+\\/?$/.test(process.env.ANTHROPIC_BASE_URL||\"\"))throw Error(\"vm2api candidate is offline-only\");const args=process.argv.slice(2);if(args.length===1&&(args[0]===\"--version\"||args[0]===\"-v\"||args[0]===\"-V\")){console.log(\"2.1.281 (Claude Code)\");return}if(process.env.CLAUDE_CODE_KIN_NATIVE_SLOTS||args.includes(\"--single-process-subagents\")){init_init2();setIsInteractive(!1);process.env.USER_TYPE=process.env.USER_TYPE||\"external\";await init()}if(process.env.CLAUDE_CODE_KIN_NATIVE_SLOTS){const{runNativeMessagesLoop:runNativeMessagesLoop2}=await Promise.resolve().then(()=>(init_nativeMessagesRunner(),exports_nativeMessagesRunner));await runNativeMessagesLoop2({options:{thinkingConfig:void 0}});return}if(args.includes(\"--single-process-subagents\")){const{runSingleProcessSlots:runSingleProcessSlots2}=await Promise.resolve().then(()=>(init_singleProcessSlots(),exports_singleProcessSlots));await runSingleProcessSlots2();return}const{profileCheckpoint:profileCheckpoint2}=await Promise.resolve().then(()=>(init_startupProfiler(),exports_startupProfiler));profileCheckpoint2(\"cli_entry\");if(!1);if(process.argv[2]===\"--claude-in-chrome-mcp\"){profileCheckpoint2(\"cli_claude_in_chrome_mcp_path\");const{runClaudeInChromeMcpServer:runClaudeInChromeMcpServer2}=await Promise.resolve().then(()=>(init_mcpServer(),exports_mcpServer));await runClaudeInChromeMcpServer2();return}else if(process.argv[2]===\"--chrome-native-host\"){profileCheckpoint2(\"cli_chrome_native_host_path\");const{runChromeNativeHost:runChromeNativeHost2}=await Promise.resolve().then(()=>(init_chromeNativeHost(),exports_chromeNativeHost));await runChromeNativeHost2();return}else if(!1);if(!1);if(!1);if(!1);if(!1)switch(args[0]){case\"ps\":case\"logs\":case\"attach\":case\"kill\":default:}if(!1);if(!1);if(!1);const hasTmuxFlag=args.includes(\"--tmux\")||args.includes(\"--tmux=classic\");if(hasTmuxFlag&&(args.includes(\"-w\")||args.includes(\"--worktree\")||args.some((a3)=>a3.startsWith(\"--worktree=\")))){profileCheckpoint2(\"cli_tmux_worktree_fast_path\");const{enableConfigs:enableConfigs2}=await Promise.resolve().then(()=>(init_config(),exports_config));enableConfigs2();const{isWorktreeModeEnabled:isWorktreeModeEnabled2}=await Promise.resolve().then(()=>exports_worktreeModeEnabled);if(isWorktreeModeEnabled2()){const{execIntoTmuxWorktree:execIntoTmuxWorktree2}=await Promise.resolve().then(()=>(init_worktree(),exports_worktree));const result=await execIntoTmuxWorktree2(args);if(result.handled)return;if(result.error){const{exitWithError:exitWithError3}=await Promise.resolve().then(()=>exports_process);exitWithError3(result.error)}}}if(args.length===1&&(args[0]===\"--update\"||args[0]===\"--upgrade\"))process.argv=[process.argv[0],process.argv[1],\"update\"];if(args.includes(\"--bare\"))process.env.CLAUDE_CODE_SIMPLE=\"1\";const{startCapturingEarlyInput:startCapturingEarlyInput2}=await Promise.resolve().then(()=>(init_earlyInput(),exports_earlyInput));startCapturingEarlyInput2();profileCheckpoint2(\"cli_before_main_import\");const{main:cliMain}=await Promise.resolve().then(()=>(init_main3(),exports_main));profileCheckpoint2(\"cli_after_main_import\");await cliMain();profileCheckpoint2(\"cli_after_main_complete\")}",
+    "promoted": "async function main2(){                                                                                                                                                                                       const args=process.argv.slice(2);if(args.length===1&&(args[0]===\"--version\"||args[0]===\"-v\"||args[0]===\"-V\")){console.log(\"2.1.281 (Claude Code)\");return}if(process.env.CLAUDE_CODE_KIN_NATIVE_SLOTS||args.includes(\"--single-process-subagents\")){init_init2();setIsInteractive(!1);process.env.USER_TYPE=process.env.USER_TYPE||\"external\";await init()}if(process.env.CLAUDE_CODE_KIN_NATIVE_SLOTS){const{runNativeMessagesLoop:runNativeMessagesLoop2}=await Promise.resolve().then(()=>(init_nativeMessagesRunner(),exports_nativeMessagesRunner));await runNativeMessagesLoop2({options:{thinkingConfig:void 0}});return}if(args.includes(\"--single-process-subagents\")){const{runSingleProcessSlots:runSingleProcessSlots2}=await Promise.resolve().then(()=>(init_singleProcessSlots(),exports_singleProcessSlots));await runSingleProcessSlots2();return}const{profileCheckpoint:profileCheckpoint2}=await Promise.resolve().then(()=>(init_startupProfiler(),exports_startupProfiler));profileCheckpoint2(\"cli_entry\");if(!1);if(process.argv[2]===\"--claude-in-chrome-mcp\"){profileCheckpoint2(\"cli_claude_in_chrome_mcp_path\");const{runClaudeInChromeMcpServer:runClaudeInChromeMcpServer2}=await Promise.resolve().then(()=>(init_mcpServer(),exports_mcpServer));await runClaudeInChromeMcpServer2();return}else if(process.argv[2]===\"--chrome-native-host\"){profileCheckpoint2(\"cli_chrome_native_host_path\");const{runChromeNativeHost:runChromeNativeHost2}=await Promise.resolve().then(()=>(init_chromeNativeHost(),exports_chromeNativeHost));await runChromeNativeHost2();return}else if(!1);if(!1);if(!1);if(!1);if(!1)switch(args[0]){case\"ps\":case\"logs\":case\"attach\":case\"kill\":default:}if(!1);if(!1);if(!1);const hasTmuxFlag=args.includes(\"--tmux\")||args.includes(\"--tmux=classic\");if(hasTmuxFlag&&(args.includes(\"-w\")||args.includes(\"--worktree\")||args.some((a3)=>a3.startsWith(\"--worktree=\")))){profileCheckpoint2(\"cli_tmux_worktree_fast_path\");const{enableConfigs:enableConfigs2}=await Promise.resolve().then(()=>(init_config(),exports_config));enableConfigs2();const{isWorktreeModeEnabled:isWorktreeModeEnabled2}=await Promise.resolve().then(()=>exports_worktreeModeEnabled);if(isWorktreeModeEnabled2()){const{execIntoTmuxWorktree:execIntoTmuxWorktree2}=await Promise.resolve().then(()=>(init_worktree(),exports_worktree));const result=await execIntoTmuxWorktree2(args);if(result.handled)return;if(result.error){const{exitWithError:exitWithError3}=await Promise.resolve().then(()=>exports_process);exitWithError3(result.error)}}}if(args.length===1&&(args[0]===\"--update\"||args[0]===\"--upgrade\"))process.argv=[process.argv[0],process.argv[1],\"update\"];if(args.includes(\"--bare\"))process.env.CLAUDE_CODE_SIMPLE=\"1\";const{startCapturingEarlyInput:startCapturingEarlyInput2}=await Promise.resolve().then(()=>(init_earlyInput(),exports_earlyInput));startCapturingEarlyInput2();profileCheckpoint2(\"cli_before_main_import\");const{main:cliMain}=await Promise.resolve().then(()=>(init_main3(),exports_main));profileCheckpoint2(\"cli_after_main_import\");await cliMain();profileCheckpoint2(\"cli_after_main_complete\")}",
+    "only_guard_bytes_changed": true
+  },
+  "local_validation": {
+    "completed": true,
+    "native_execution": false,
+    "behavior_tests": 6,
+    "test_sha256": "7d0b4d49181950a4482e64ff4c963a525bb6105ced40b8de79b77649fc2b26a1",
+    "scope": "extracted entry with controlled dependencies, full JS/ELF/UPX checks; not Linux ELF execution"
+  },
+  "tools": {
+    "upx": "upx 5.0.1",
+    "syntax": "1.4.2"
+  },
+  "patches_sha256": "3503be4a61784e16c1f4d84b30495254b3d6d0f92b28800d38366eb859a5fae4"
+}

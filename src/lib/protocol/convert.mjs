@@ -1,3 +1,11 @@
+import { applyChatThinking } from './chat-thinking.mjs'
+import {
+  CHAT_RESPONSE,
+  createChatResponseState,
+  applyChatResponseEvent,
+  finishChatResponse,
+  chatResponseJSON,
+} from './chat-response.mjs'
 /**
  * Protocol conversion — passthrough-first.
  * Tools: OpenAI function tools ↔ Claude tools
@@ -12,8 +20,16 @@ import {
 } from './sanitize.mjs'
 import { defaultMaxTokensForModel } from './model-policy.mjs'
 import { inboundHasOpenAIToolShape } from '../identity/crs-persona.mjs'
-import { openaiReasoningToClaudeThinking, claudeThinkingToOpenAIReasoning } from './thinking.mjs'
-import { openaiContentToClaudeContent } from './images.mjs'
+import { applyOpenAIReasoningToClaude } from './thinking.mjs'
+import {
+  openaiMessagesToClaude,
+  normalizeClaudeToolInputSchema,
+  openaiToolChoiceToClaude,
+  applyChatToolChoice,
+  chatToolsToClaude,
+  appendChatResponseFormat,
+} from './chat-messages.mjs'
+export { openaiToolChoiceToClaude } from './chat-messages.mjs'
 import { remapCodexTools } from './codex-tools.mjs'
 import { CLAUDE_WEB_SEARCH_TOOL, isWebSearchTool } from './web-search.mjs'
 
@@ -80,9 +96,10 @@ export function openaiToolsToClaude(tools) {
           {
             name: t.function.name,
             description: t.function.description || '',
-            input_schema: t.function.parameters || { type: 'object', properties: {} },
+            input_schema: normalizeClaudeToolInputSchema(t.function.parameters ?? t.function.parametersJsonSchema),
+            ...(typeof (t.function.strict ?? t.strict) === 'boolean' ? { strict: t.function.strict ?? t.strict } : {}),
           },
-          t.function.cache_control ? t.function : t,
+          t.cache_control ? t : t.function,
         ),
       )
       continue
@@ -98,7 +115,8 @@ export function openaiToolsToClaude(tools) {
         {
           name,
           description: t.description || '',
-          input_schema: t.input_schema || t.parameters || { type: 'object', properties: {} },
+          input_schema: normalizeClaudeToolInputSchema(t.input_schema ?? t.parameters ?? t.parametersJsonSchema),
+          ...(typeof t.strict === 'boolean' ? { strict: t.strict } : {}),
         },
         t,
       ),
@@ -146,94 +164,6 @@ export function applyOpenAIRefusalFields(message, claude) {
     if (!message.refusal) message.refusal = message.content
   }
   return message
-}
-
-/** OpenAI tool_choice → Claude */
-export function openaiToolChoiceToClaude(toolChoice) {
-  if (toolChoice == null) return undefined
-  if (toolChoice === 'auto') return { type: 'auto' }
-  if (toolChoice === 'none') return { type: 'none' }
-  if (toolChoice === 'required') return { type: 'any' }
-  if (typeof toolChoice === 'object' && toolChoice.type === 'function') {
-    return { type: 'tool', name: toolChoice.function?.name || toolChoice.name }
-  }
-  return undefined
-}
-
-/** Convert OpenAI-style messages including tool / tool_calls to Claude blocks */
-function openaiMessagesToClaude(messages) {
-  const systemParts = []
-  const out = []
-
-  for (const m of messages || []) {
-    if (m.role === 'system' || m.role === 'developer') {
-      const text = contentToText(m.content)
-      if (text) systemParts.push(text)
-      continue
-    }
-
-    if (m.role === 'tool') {
-      // tool result
-      const block = withCacheControl(
-        {
-          type: 'tool_result',
-          tool_use_id: m.tool_call_id || m.id || 'tool_unknown',
-          content: contentToText(m.content),
-        },
-        m,
-      )
-      // append to last user message or create user message
-      if (out.length && out[out.length - 1].role === 'user' && Array.isArray(out[out.length - 1].content)) {
-        out[out.length - 1].content.push(block)
-      } else {
-        out.push({ role: 'user', content: [block] })
-      }
-      continue
-    }
-
-    if (m.role === 'assistant') {
-      const content = []
-      const text = contentToText(m.content)
-      if (text) content.push({ type: 'text', text })
-      if (Array.isArray(m.tool_calls)) {
-        for (const tc of m.tool_calls) {
-          let input = {}
-          try {
-            input =
-              typeof tc.function?.arguments === 'string'
-                ? JSON.parse(tc.function.arguments || '{}')
-                : tc.function?.arguments || {}
-          } catch {
-            input = { raw: tc.function?.arguments }
-          }
-          content.push({
-            type: 'tool_use',
-            id: tc.id || `toolu_${Math.random().toString(36).slice(2, 10)}`,
-            name: tc.function?.name || tc.name,
-            input,
-          })
-        }
-      }
-      if (!content.length) content.push({ type: 'text', text: '' })
-      out.push({ role: 'assistant', content })
-      continue
-    }
-
-    // user (text + optional images) — always blocks so cache stamps share a hang point
-    const content = openaiContentToClaudeContent(m.content)
-    const role = 'user'
-    const last = out[out.length - 1]
-    if (last?.role === role && Array.isArray(last.content) && Array.isArray(content)) {
-      last.content = last.content.concat(content)
-    } else {
-      out.push({ role, content })
-    }
-  }
-
-  if (out.length && out[0].role !== 'user') {
-    out.unshift({ role: 'user', content: '' })
-  }
-  return { systemParts, messages: out }
 }
 
 /** Anthropic hop is always SSE. Client stream vs JSON is decided after the worker. */
@@ -287,7 +217,15 @@ export function toClaudeMessages(protocol, body, opts = { rewrite: false, model_
   }
 
   if (protocol === 'openai.chat') {
-    return { claude: withUpstreamStream(openaiToClaude(body, opts)), mode: opts.rewrite ? 'rewrite' : 'convert' }
+    const claude = withUpstreamStream(openaiToClaude(body, opts))
+    const format = openaiResponseFormatToOutputConfig(body.response_format)
+    return {
+      claude,
+      mode: opts.rewrite ? 'rewrite' : 'convert',
+      ...(format && claude.system?.length
+        ? { cacheTitleHint: { instruction: claude.system.at(-1).text, outputConfig: format } }
+        : {}),
+    }
   }
   if (protocol === 'openai.completions') {
     return { claude: withUpstreamStream(completionsToClaude(body, opts)), mode: opts.rewrite ? 'rewrite' : 'convert' }
@@ -299,24 +237,32 @@ export function toClaudeMessages(protocol, body, opts = { rewrite: false, model_
 }
 
 function openaiToClaude(body, opts) {
-  const { systemParts, messages } = openaiMessagesToClaude(body.messages || [])
+  const { system, messages } = openaiMessagesToClaude(body.messages || [], {
+    preserveCaller: opts.chatPreserve !== false,
+  })
   const out = {
     model: mapModel(body.model, { allowMap: opts.model_map !== false }),
-    max_tokens: body.max_tokens || body.max_completion_tokens || defaultMaxTokensForModel(body.model),
+    max_tokens: body.max_tokens ?? body.max_completion_tokens ?? 32000,
     messages,
   }
-  if (systemParts.length) out.system = systemParts.map((text) => ({ type: 'text', text }))
-  if (body.temperature != null) out.temperature = body.temperature
+  if (system.length) out.system = system
+  // CLIProxy drops temperature on Chat → Claude; thinking sampling is handled by the hop.
   if (body.top_p != null) out.top_p = body.top_p
-  if (body.stop != null) out.stop_sequences = Array.isArray(body.stop) ? body.stop : [body.stop]
-  if (Array.isArray(body.stop_sequences) && body.stop_sequences.length) out.stop_sequences = body.stop_sequences
-  const tools = openaiToolsToClaude(body.tools)
+  if (body.stop != null) {
+    const stops = Array.isArray(body.stop) ? body.stop : [body.stop]
+    if (stops.length) out.stop_sequences = stops.map((v) => (typeof v === 'string' ? v : JSON.stringify(v)))
+  }
+  if (opts.chatPreserve === false) {
+    if (body.stop != null) out.stop_sequences = Array.isArray(body.stop) ? body.stop : [body.stop]
+    if (Array.isArray(body.stop_sequences) && body.stop_sequences.length) out.stop_sequences = body.stop_sequences
+  }
+  const tools = opts.chatPreserve === false ? openaiToolsToClaude(body.tools) : chatToolsToClaude(body.tools)
   if (tools?.length) out.tools = tools
-  const tc = openaiToolChoiceToClaude(body.tool_choice)
-  if (tc) out.tool_choice = tc
-  const thinking = openaiReasoningToClaudeThinking(body)
-  if (thinking) out.thinking = thinking
-  applyStructuredOutput(out, body)
+  applyChatToolChoice(out, body, { cpa: opts.chatPreserve !== false })
+  if (opts.chatPreserve === false) applyStructuredOutput(out, body)
+  else appendChatResponseFormat(out, body)
+  if (opts.chatPreserve === false) applyOpenAIReasoningToClaude(out, body)
+  else applyChatThinking(out, body, { model: opts.thinkingModel || out.model })
   if (body.stream) out.stream = true
   return canonicalizeClaudeMessagesShape(out)
 }
@@ -335,7 +281,7 @@ function completionsToClaude(body, opts) {
       ...body,
       messages: [{ role: 'user', content: user || 'Hello' }],
     },
-    opts,
+    { ...opts, chatPreserve: false },
   )
 }
 
@@ -374,47 +320,14 @@ function responsesToClaude(body, opts) {
   if (systemParts.length) out.system = systemParts.map((text) => ({ type: 'text', text }))
   const tools = openaiToolsToClaude(body.tools)
   if (tools?.length) out.tools = tools
-  const thinking = openaiReasoningToClaudeThinking(body)
-  if (thinking) out.thinking = thinking
   applyStructuredOutput(out, body)
+  applyOpenAIReasoningToClaude(out, body)
   if (body.stream) out.stream = true
   return canonicalizeClaudeMessagesShape(out)
 }
 
 export function fromClaudeToOpenAIChat(claude, requestedModel, vmId, mode = 'convert') {
-  const textParts = []
-  const toolCalls = []
-  for (const b of claude.content || []) {
-    if (b.type === 'text') textParts.push(b.text || '')
-    if (b.type === 'tool_use') {
-      toolCalls.push({
-        id: b.id,
-        type: 'function',
-        function: {
-          name: b.name,
-          arguments: JSON.stringify(b.input || {}),
-        },
-      })
-    }
-  }
-  const message = { role: 'assistant', content: textParts.join('') || null }
-  const reasoning = claudeThinkingToOpenAIReasoning(claude)
-  if (reasoning) message.reasoning_content = reasoning
-  if (toolCalls.length) {
-    message.tool_calls = toolCalls
-    if (!textParts.length) message.content = null
-  }
-  applyOpenAIRefusalFields(message, claude)
-  const finish = claudeStopReasonToOpenAIFinish(claude.stop_reason)
-
-  return {
-    id: 'chatcmpl-' + (claude.id || 'kin'),
-    object: 'chat.completion',
-    created: Math.floor(Date.now() / 1000),
-    model: requestedModel || claude.model,
-    choices: [{ index: 0, message, finish_reason: finish }],
-    usage: chatUsage(claude.usage),
-  }
+  return chatResponseJSON(claude)
 }
 
 /**
@@ -515,14 +428,20 @@ function responsesUsage(usage) {
 }
 
 // ---------- Streaming: Claude SSE → OpenAI Chat chunks ----------
-export function createOpenAIChatStreamState(model, vmId) {
+function createLegacyChatStreamState(model, vmId, { includeUsage = false } = {}) {
   return {
     id: 'chatcmpl-' + Math.random().toString(36).slice(2, 12),
     model,
     vmId,
     toolIndex: 0,
     toolMap: new Map(), // block index → tool call index
+    pendingToolInput: new Map(),
+    includeUsage,
     sentRole: false,
+    sentFinish: false,
+    sentTrailingUsage: false,
+    errorSent: false,
+    usage: null,
     dataBuf: '',
   }
 }
@@ -570,8 +489,35 @@ function takeParsedSseData(state) {
   return null
 }
 
-export function createClaudeMessageAssembler() {
-  return { message: null, dataBuf: '' }
+function mergeStreamUsage(current, next) {
+  if (!next || typeof next !== 'object') return current
+  const out = { ...(current || {}) }
+  for (const [key, value] of Object.entries(next)) {
+    if (value == null) continue
+    out[key] =
+      value && typeof value === 'object' && !Array.isArray(value)
+        ? { ...(out[key] && typeof out[key] === 'object' ? out[key] : {}), ...value }
+        : value
+  }
+  return out
+}
+
+function claudeStreamError(evt) {
+  return {
+    type: evt.error?.type || 'api_error',
+    message: evt.error?.message || evt.message || 'Upstream stream failed',
+    ...(evt.error?.code ? { code: evt.error.code } : {}),
+  }
+}
+
+export function createClaudeMessageAssembler({ chat = false } = {}) {
+  return {
+    message: null,
+    dataBuf: '',
+    sawMessageStop: false,
+    error: null,
+    ...(chat ? { chat: createChatResponseState('', { buffered: true }) } : {}),
+  }
 }
 
 function ensureAssemblerMessage(state) {
@@ -586,9 +532,28 @@ function ensureAssemblerMessage(state) {
 export function applyClaudeSSELineToMessage(line, state) {
   const evt = consumeClaudeSSEData(line, state)
   if (!evt) return state.message
+  if (state.chat) {
+    applyChatResponseEvent(evt, state.chat)
+    if (state.chat.error) state.error = state.chat.error
+  }
+  const message = applyClaudeSSEEventToMessage(evt, state)
+  if (message && state.chat) message[CHAT_RESPONSE] = state.chat
+  return message
+}
+
+function applyClaudeSSEEventToMessage(evt, state) {
+  if (evt.type === 'error') {
+    state.error = claudeStreamError(evt)
+    return state.message
+  }
+  if (evt.type === 'message_stop') {
+    state.sawMessageStop = true
+    return state.message
+  }
 
   if (evt.type === 'message_start' && evt.message) {
     const started = evt.message
+    if (state.chat) state.sawMessageStop = false
     state.message = {
       ...started,
       type: started.type || 'message',
@@ -656,14 +621,18 @@ export function applyClaudeSSELineToMessage(line, state) {
     if (evt.delta && Object.prototype.hasOwnProperty.call(evt.delta, 'diagnostics')) {
       message.diagnostics = evt.delta.diagnostics
     }
-    if (evt.usage) message.usage = { ...(message.usage || {}), ...evt.usage }
+    if (evt.usage) message.usage = mergeStreamUsage(message.usage, evt.usage)
   }
   return message
 }
 
-export function claudeSSELineToOpenAIChatChunks(line, state) {
+function legacyChatChunks(line, state) {
   const evt = consumeClaudeSSEData(line, state)
-  if (!evt) return []
+  if (!evt || state.errorSent) return []
+  if (evt.type === 'error') {
+    state.errorSent = true
+    return [{ error: claudeStreamError(evt) }]
+  }
 
   const chunks = []
   const base = {
@@ -674,6 +643,7 @@ export function claudeSSELineToOpenAIChatChunks(line, state) {
   }
 
   if (evt.type === 'message_start') {
+    state.usage = mergeStreamUsage(state.usage, evt.message?.usage)
     chunks.push({
       ...base,
       choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }],
@@ -681,9 +651,16 @@ export function claudeSSELineToOpenAIChatChunks(line, state) {
     state.sentRole = true
   }
 
+  if (evt.type === 'content_block_start' && evt.content_block?.type === 'text' && evt.content_block.text) {
+    chunks.push({ ...base, choices: [{ index: 0, delta: { content: evt.content_block.text }, finish_reason: null }] })
+  }
+
   if (evt.type === 'content_block_start' && evt.content_block?.type === 'tool_use') {
     const idx = state.toolIndex++
     state.toolMap.set(evt.index, idx)
+    if (evt.content_block.input && Object.keys(evt.content_block.input).length) {
+      state.pendingToolInput.set(evt.index, JSON.stringify(evt.content_block.input))
+    }
     chunks.push({
       ...base,
       choices: [
@@ -712,7 +689,7 @@ export function claudeSSELineToOpenAIChatChunks(line, state) {
     // OpenAI-compat: announce reasoning channel
     chunks.push({
       ...base,
-      choices: [{ index: 0, delta: { reasoning_content: '' }, finish_reason: null }],
+      choices: [{ index: 0, delta: { reasoning_content: evt.content_block.thinking || '' }, finish_reason: null }],
     })
   }
 
@@ -738,6 +715,8 @@ export function claudeSSELineToOpenAIChatChunks(line, state) {
       })
     }
     if (evt.delta?.type === 'input_json_delta') {
+      // Deltas replace the initial input representation, never concatenate with it.
+      state.pendingToolInput.delete(evt.index)
       const idx = state.toolMap.get(evt.index) ?? 0
       chunks.push({
         ...base,
@@ -777,15 +756,68 @@ export function claudeSSELineToOpenAIChatChunks(line, state) {
     })
   }
 
+  const flushToolInput = (index) => {
+    if (!state.pendingToolInput.has(index)) return
+    chunks.push({
+      ...base,
+      choices: [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [
+              { index: state.toolMap.get(index), function: { arguments: state.pendingToolInput.get(index) } },
+            ],
+          },
+          finish_reason: null,
+        },
+      ],
+    })
+    state.pendingToolInput.delete(index)
+  }
+  if (evt.type === 'content_block_stop') flushToolInput(evt.index)
+
   if (evt.type === 'message_delta') {
-    const finish = claudeStopReasonToOpenAIFinish(evt.delta?.stop_reason)
+    state.usage = mergeStreamUsage(state.usage, evt.usage)
+    const reason = typeof evt.delta?.stop_reason === 'string' ? evt.delta.stop_reason.trim() : ''
+    const finish = reason && !state.sentFinish ? claudeStopReasonToOpenAIFinish(reason) : null
+    if (finish) {
+      for (const index of state.pendingToolInput.keys()) flushToolInput(index)
+      state.sentFinish = true
+    }
     chunks.push({
       ...base,
       choices: [{ index: 0, delta: {}, finish_reason: finish }],
-      usage: evt.usage ? chatUsage(evt.usage) : undefined,
+      usage: state.usage ? chatUsage(state.usage) : undefined,
     })
   }
+  if (evt.type === 'message_stop') {
+    for (const index of state.pendingToolInput.keys()) flushToolInput(index)
+  }
 
+  return state.includeUsage ? chunks.map((chunk) => ({ ...chunk, usage: null })) : chunks
+}
+
+/** Call only after a successful transport EOF/trailer reconciliation, before DONE. */
+function finishLegacyChatStream(state, usage, stopReason) {
+  if (!state || state.errorSent || state.sentTrailingUsage) return []
+  state.usage = mergeStreamUsage(state.usage, usage)
+  // Some workers report the actual stop only in EOF metadata. Bridge that
+  // observation, never invent a stop or duplicate a finish already sent by SSE.
+  const reason = typeof stopReason === 'string' ? stopReason.trim() : ''
+  const chunks =
+    reason && !state.sentFinish
+      ? legacyChatChunks(`data: ${JSON.stringify({ type: 'message_delta', delta: { stop_reason: reason } })}`, state)
+      : []
+  if (!state.includeUsage || !state.sentFinish) return chunks
+  state.sentTrailingUsage = true
+  chunks.push({
+    id: state.id,
+    object: 'chat.completion.chunk',
+    created: Math.floor(Date.now() / 1000),
+    model: state.model,
+    choices: [],
+    usage: chatUsage(state.usage),
+  })
   return chunks
 }
 
@@ -930,31 +962,56 @@ export function fromClaudeToOpenAICompletions(claude, requestedModel) {
   }
 }
 
-export function createOpenAICompletionStreamState(model, vmId) {
+export function createOpenAICompletionStreamState(model, vmId, options) {
   return {
     id: 'cmpl-' + Math.random().toString(36).slice(2, 12),
     model,
     vmId,
-    chat: createOpenAIChatStreamState(model, vmId),
+    chat: createLegacyChatStreamState(model, vmId, options),
   }
 }
 
 export function claudeSSELineToOpenAICompletionChunks(line, state) {
-  const chats = claudeSSELineToOpenAIChatChunks(line, state.chat)
+  return completionChunks(legacyChatChunks(line, state.chat), state)
+}
+
+export function finishOpenAICompletionStream(state, usage, stopReason) {
+  return completionChunks(finishLegacyChatStream(state?.chat, usage, stopReason), state)
+}
+
+function completionChunks(chats, state) {
   return chats
-    .map((c) => ({
-      id: state.id,
-      object: 'text_completion',
-      created: c.created,
-      model: state.model,
-      choices: [
-        {
-          text: c.choices?.[0]?.delta?.content || '',
-          index: 0,
-          finish_reason: c.choices?.[0]?.finish_reason ?? null,
-          logprobs: null,
-        },
-      ],
-    }))
-    .filter((c) => c.choices[0].text || c.choices[0].finish_reason)
+    .map((c) =>
+      c.error
+        ? c
+        : {
+            id: state.id,
+            object: 'text_completion',
+            created: c.created,
+            model: state.model,
+            ...(c.usage !== undefined ? { usage: c.usage } : {}),
+            choices:
+              c.choices?.length === 0
+                ? []
+                : [
+                    {
+                      text: c.choices?.[0]?.delta?.content || '',
+                      index: 0,
+                      finish_reason: c.choices?.[0]?.finish_reason ?? null,
+                      logprobs: null,
+                    },
+                  ],
+          },
+    )
+    .filter((c) => c.error || c.choices?.[0]?.text || c.choices?.[0]?.finish_reason || c.usage)
+}
+
+export function createOpenAIChatStreamState(model, vmId, options = {}) {
+  return createChatResponseState(model, options)
+}
+export function claudeSSELineToOpenAIChatChunks(line, state) {
+  return applyChatResponseEvent(consumeClaudeSSEData(line, state), state)
+}
+export function finishOpenAIChatStream(state, usage, stopReason) {
+  return finishChatResponse(state, usage, stopReason)
 }

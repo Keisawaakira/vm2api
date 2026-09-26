@@ -1,10 +1,12 @@
 /**
  * Anthropic cache_control ttl for unofficial OAuth.
  * Default 1h (2× input). Customers may request 5m (1.25× input);
- * billing must use the TTL we actually sent.
+ * Explicit markers win. Billing uses upstream usage, never this request default.
  */
 import fs from 'node:fs'
 import { isAnthropicServerTool } from './web-search.mjs'
+import { isApiKeyMode } from '../oauth/credential-mode.mjs'
+import { usesShortClaudeCache } from './cache-request.mjs'
 
 export const DEFAULT_CACHE_TTL = '1h'
 export const CACHE_TTL_HEADER = 'x-kin-cache-ttl'
@@ -28,20 +30,23 @@ export function normalizeCacheTtl(value) {
   return DEFAULT_CACHE_TTL
 }
 
-export function cacheTtlFromRouting(routing = {}) {
-  return normalizeCacheTtl(routing?.compatibility?.cache_ttl)
+export function cacheTtlFromRouting(routing = {}, { credentialMode = 'oauth' } = {}) {
+  const selected = String(routing?.compatibility?.cache_ttl || 'auto')
+    .trim()
+    .toLowerCase()
+  return selected === 'auto' ? (isApiKeyMode(credentialMode) ? '5m' : '1h') : normalizeCacheTtl(selected)
 }
 
-export function cacheTtlFromRoutingFile(filePath) {
-  if (!filePath) return DEFAULT_CACHE_TTL
+export function cacheTtlFromRoutingFile(filePath, options = {}) {
+  if (!filePath) return cacheTtlFromRouting({}, options)
   try {
-    return cacheTtlFromRouting(JSON.parse(fs.readFileSync(filePath, 'utf8')))
+    return cacheTtlFromRouting(JSON.parse(fs.readFileSync(filePath, 'utf8')), options)
   } catch {
-    return DEFAULT_CACHE_TTL
+    return cacheTtlFromRouting({}, options)
   }
 }
 
-/** Highest explicit inbound TTL. Mixed requests use 1h, then every marker is normalized to it. */
+/** Highest explicit inbound TTL, for selecting newly added prefix markers only. */
 export function bodyCacheTtl(body) {
   if (!body || typeof body !== 'object') return null
   const ttls = []
@@ -67,18 +72,22 @@ export function bodyRequestsHourCache(body) {
   return bodyCacheTtl(body) === '1h'
 }
 
-/**
- * Header, then an explicit 5m/1h on any inbound marker, then the settings menu.
- * Official Claude Code is included: its ttl-less markers mean "not chosen", so
- * they take the menu value instead of Anthropic's implicit 5m.
- */
-export function resolveCacheTtl({ headers = {}, body, routing, routingFile } = {}) {
+/** Header > explicit inbound TTL > menu/credential default, including official CC. */
+export function resolveCacheTtl({
+  headers = {},
+  body,
+  routing,
+  routingFile,
+  credentialMode = 'oauth',
+  subagent = false,
+} = {}) {
+  if (usesShortClaudeCache({ headers, body, subagent })) return '5m'
   const hdr = headers[CACHE_TTL_HEADER] || headers['X-Kin-Cache-Ttl']
   if (hdr != null && String(hdr).trim()) return normalizeCacheTtl(hdr)
   const requested = bodyCacheTtl(body)
   if (requested) return requested
-  if (routing) return cacheTtlFromRouting(routing)
-  return cacheTtlFromRoutingFile(routingFile)
+  if (routing) return cacheTtlFromRouting(routing, { credentialMode })
+  return cacheTtlFromRoutingFile(routingFile, { credentialMode })
 }
 
 const CACHE_TTL_MS = Object.freeze({ '5m': 5 * 60_000, '1h': 60 * 60_000 })
@@ -127,12 +136,6 @@ export function dropCacheControlScope(control) {
   if (!Object.prototype.hasOwnProperty.call(control, 'scope')) return control
   const { scope: _scope, ...rest } = control
   return rest
-}
-
-function setEphemeralTtl(control, ttl) {
-  if (!control || typeof control !== 'object') return { type: 'ephemeral', ttl }
-  if (control.type && control.type !== 'ephemeral') return control
-  return { type: 'ephemeral', ttl }
 }
 
 function mapCacheControl(node, mapFn) {
@@ -224,10 +227,9 @@ export function stripCacheScopeFields(body) {
 }
 
 function setEphemeralTtlUnlessPinned(control, ttl) {
-  if (!control || typeof control !== 'object') return { type: 'ephemeral', ttl }
-  if (control.type && control.type !== 'ephemeral') return control
-  if (String(control.ttl || '').trim()) return { type: 'ephemeral', ttl: normalizeCacheTtl(control.ttl) }
-  return { type: 'ephemeral', ttl }
+  if (!control || typeof control !== 'object' || control.type !== 'ephemeral') return control
+  if (Object.hasOwn(control, 'ttl') || ttl !== '1h') return control
+  return { ...control, ttl: '1h' }
 }
 
 /** Anthropic treats a missing ttl as 5m. */
@@ -236,16 +238,8 @@ export function ephemeralCacheTtl(control) {
   return String(control.ttl || '5m').toLowerCase() === '1h' ? '1h' : '5m'
 }
 
-function downgradePinnedHourToFive() {
-  return { type: 'ephemeral', ttl: '5m' }
-}
-
 function walkCacheNodes(body, mapFn) {
   const out = { ...body }
-  if (out.cache_control) {
-    const mapped = mapFn({ cache_control: out.cache_control })
-    out.cache_control = mapped?.cache_control
-  }
   if (Array.isArray(out.tools)) out.tools = out.tools.map(mapFn)
   if (Array.isArray(out.system)) out.system = out.system.map(mapFn)
   if (Array.isArray(out.messages)) {
@@ -255,55 +249,43 @@ function walkCacheNodes(body, mapFn) {
       return content.some((block, i) => block !== message.content[i]) ? { ...message, content } : message
     })
   }
+  // Top-level automatic caching is a tail boundary, after explicit block markers.
+  if (out.cache_control) out.cache_control = mapFn({ cache_control: out.cache_control })?.cache_control
   return out
 }
 
-/**
- * One TTL per request. Anthropic reads a missing ttl as 5m and rejects a later
- * 1h. If any breakpoint is 5m, every 1h is rewritten to 5m. Never upgrade 5m
- * to 1h: wrap re-adds ttl-less tools after that upgrade and the 1h 400s.
- */
+/** CLIProxy ordering: preserve early 1h; downgrade only 1h after a 5m marker. */
 export function enforceCacheTtlOrder(body) {
   if (!body || typeof body !== 'object') return body
-  let has5m = false
-  walkCacheNodes(body, (node) => {
-    if (node?.cache_control && ephemeralCacheTtl(node.cache_control) === '5m') has5m = true
-    return node
-  })
-  if (!has5m) return body
-  let changed = false
-  const fix = (node) => {
-    if (!node?.cache_control || ephemeralCacheTtl(node.cache_control) !== '1h') return node
-    changed = true
-    return { ...node, cache_control: downgradePinnedHourToFive() }
-  }
-  const out = walkCacheNodes(body, fix)
-  return changed ? out : body
-}
-
-/** Retarget every Node marker to one TTL. Default matches DEFAULT_CACHE_TTL. */
-export function forceEphemeralCacheTtl(body, ttl = DEFAULT_CACHE_TTL) {
-  const target = normalizeCacheTtl(ttl)
-  if (!body || typeof body !== 'object') return body
+  let seen5m = false
   let changed = false
   const fix = (node) => {
     if (!node?.cache_control) return node
-    const control = node.cache_control
-    if (control.type && control.type !== 'ephemeral') return node
-    if (control.type === 'ephemeral' && control.ttl === target) return node
+    if (ephemeralCacheTtl(node.cache_control) !== '1h') {
+      seen5m = true
+      return node
+    }
+    if (!seen5m) return node
     changed = true
-    return { ...node, cache_control: { ...control, type: 'ephemeral', ttl: target } }
+    return { ...node, cache_control: { ...node.cache_control, ttl: '5m' } }
   }
   const out = walkCacheNodes(body, fix)
   return changed ? out : body
 }
 
-/** Rewrite every outbound cache breakpoint to this request's resolved TTL. */
-export function applyCacheTtlToBody(body, ttl = DEFAULT_CACHE_TTL) {
-  const target = normalizeCacheTtl(ttl)
+/** Fill TTL only while the gateway owns defaults; never overwrite explicit values. */
+export function applyCacheTtlToBody(body, ttl = DEFAULT_CACHE_TTL, { short = false } = {}) {
   if (!body || typeof body !== 'object') return body
+  if (short)
+    return walkCacheNodes(body, (node) => {
+      if (!node?.cache_control || !Object.hasOwn(node.cache_control, 'ttl')) return node
+      const { ttl: _ttl, ...control } = node.cache_control
+      return { ...node, cache_control: control }
+    })
+  if (ttl == null) return body
+  const target = normalizeCacheTtl(ttl)
   return walkCacheNodes(body, (node) =>
-    node?.cache_control ? { ...node, cache_control: setEphemeralTtl(node.cache_control, target) } : node,
+    node?.cache_control ? { ...node, cache_control: setEphemeralTtlUnlessPinned(node.cache_control, target) } : node,
   )
 }
 
@@ -312,16 +294,14 @@ export const MESSAGES_BREAKPOINT_MODES = Object.freeze(['off', 'fill', 'rewrite'
 /**
  * Anthropic only caches a prefix that ends at a breakpoint, so a body with no
  * cache_control at all is billed full price every turn no matter what cache_ttl
- * says. `cache_ttl` retimes existing breakpoints; this config creates them.
+ * says. `cache_ttl` fills missing TTL only; this config creates markers.
  */
 export const DEFAULT_CACHE_BREAKPOINTS = Object.freeze({
   enabled: true,
   preserve_client: true,
   system_tail: true,
   tools_tail: true,
-  // rewrite removes caller-owned markers before rebuilding proxy-owned anchors.
-  // cli-hop overrides this with the current Claude Code single-tail policy.
-  messages: 'rewrite',
+  messages: 'fill',
 })
 
 export function normalizeMessagesBreakpointMode(value) {
@@ -414,6 +394,12 @@ function isDeferredLoadingTool(tool) {
  * messages, so a breakpoint on an earlier block would exclude it.
  */
 export function injectSystemTailBreakpoint(body, ttl = DEFAULT_CACHE_TTL) {
+  if (typeof body?.system === 'string' && body.system.trim()) {
+    return {
+      ...body,
+      system: [{ type: 'text', text: body.system, cache_control: { type: 'ephemeral', ttl: normalizeCacheTtl(ttl) } }],
+    }
+  }
   if (!body || typeof body !== 'object' || !Array.isArray(body.system) || body.system.length === 0) return body
   const idx = body.system.length - 1
   const stamped = stampNode(body.system[idx], normalizeCacheTtl(ttl))
@@ -512,6 +498,7 @@ export function injectToolsTailBreakpoint(body, ttl = DEFAULT_CACHE_TTL) {
   if (!body || typeof body !== 'object') return body
   const out = stripDeferredToolCacheControl(body)
   if (!Array.isArray(out.tools) || out.tools.length === 0) return out
+  if (out.tools.some((tool) => tool?.cache_control)) return out
   let idx = -1
   for (let i = 0; i < out.tools.length; i++) {
     const tool = out.tools[i]
@@ -581,51 +568,46 @@ function stampMessageTail(messages, idx, ttl) {
   return next
 }
 
-/**
- * `tail` matches current Claude Code: exactly one message-level marker on the
- * current tail. `rewrite` retains the generic Messages two-anchor policy.
- * `fill` preserves caller markers and uses that policy only when none exist.
- */
-function penultimateUserIndex(messages) {
-  if (!Array.isArray(messages) || messages.length < 4) return -1
-  let userCount = 0
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i]?.role !== 'user') continue
-    userCount++
-    if (userCount === 2) return i
-  }
-  return -1
-}
-
+/** HTTP fill/rewrite preserve anchors; explicit tail replaces message markers. Native CLI bypasses this helper. */
 export function applyMessageBreakpoints(body, ttl = DEFAULT_CACHE_TTL, mode = DEFAULT_CACHE_BREAKPOINTS.messages) {
   const resolved = normalizeMessagesBreakpointMode(mode)
-  if (resolved === 'off') return body
-  if (!body || typeof body !== 'object' || !Array.isArray(body.messages) || body.messages.length === 0) return body
-  if (resolved === 'fill' && hasMessageBreakpoint(body.messages)) return body
-  const target = normalizeCacheTtl(ttl)
-  let messages = resolved === 'fill' ? body.messages : dropMessageBreakpoints(body.messages)
-  if (resolved === 'cli-hop') {
-    return messages === body.messages ? body : { ...body, messages }
+  if (resolved === 'off' || resolved === 'cli-hop') return body
+  if (!body || !Array.isArray(body.messages) || !body.messages.length) return body
+  if (resolved === 'tail') {
+    const messages = dropMessageBreakpoints(body.messages)
+    const next = stampMessageTail(messages, messages.length - 1, normalizeCacheTtl(ttl))
+    return next === body.messages ? body : { ...body, messages: next }
   }
-  messages = stampMessageTail(messages, messages.length - 1, target)
-  if (resolved !== 'tail') {
-    const prevUser = penultimateUserIndex(messages)
-    if (prevUser >= 0) messages = stampMessageTail(messages, prevUser, target)
+  const messages = body.messages
+  let idx = -1
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]
+    if (!['user', 'assistant'].includes(message?.role)) continue
+    const content = message.content
+    if (typeof content !== 'string' && (!Array.isArray(content) || !content.length)) continue
+    if (message.role === 'assistant' && ['thinking', 'redacted_thinking'].includes(content?.at?.(-1)?.type)) continue
+    idx = i
+    break
   }
-  return messages === body.messages ? body : { ...body, messages }
+  if (idx < 0) return body
+  const final = messages.at(-1)
+  if (final.role === 'system' && typeof final.content === 'string' && final.content.trim()) idx = messages.length - 1
+  if (hasMessageBreakpoint([messages[idx]])) return body
+  const next = stampMessageTail(messages, idx, normalizeCacheTtl(ttl))
+  return next === messages ? body : { ...body, messages: next }
 }
 
-/**
- * tools → system → messages matches the order Anthropic evaluates breakpoints,
- * so a uniform ttl never produces an illegal 1h-after-5m sequence.
- */
+/** Fill missing section markers; final outbound assembly handles TTL ordering. */
 export function applyCacheBreakpoints(body, { ttl = DEFAULT_CACHE_TTL, config, inbound } = {}) {
   const cfg = normalizeCacheBreakpoints(config)
   if (!cfg.enabled) return body
   const source = inbound && typeof inbound === 'object' ? inbound : body
   const target = highestInboundCacheTtl(source, ttl)
-  let out = body
-  if (cfg.tools_tail) out = injectToolsTailBreakpoint(out, target)
+  let out = stripDeferredToolCacheControl(body)
+  const hasSystem = Array.isArray(out.system)
+    ? out.system.length > 0
+    : typeof out.system === 'string' && out.system.trim() !== ''
+  if (cfg.tools_tail && !hasSystem) out = injectToolsTailBreakpoint(out, target)
   const caller = cfg.preserve_client ? callerSystemCacheControl(source) : null
   // A template that marks its own boundary (the official agent slot) already has
   // the prefix it wants; a second marker on the tail would only widen it over the
@@ -633,7 +615,7 @@ export function applyCacheBreakpoints(body, { ttl = DEFAULT_CACHE_TTL, config, i
   if (!hasSystemBreakpoint(out.system)) {
     if (caller) {
       out = injectSystemTailBreakpoint(out, caller.ttl ? normalizeCacheTtl(caller.ttl) : target)
-    } else if (cfg.system_tail && systemPrefixReachesCacheMinimum(out)) {
+    } else if (cfg.system_tail) {
       out = injectSystemTailBreakpoint(out, target)
     }
   }
@@ -641,40 +623,7 @@ export function applyCacheBreakpoints(body, { ttl = DEFAULT_CACHE_TTL, config, i
   return out
 }
 
-function n(v) {
-  return Number(v) || 0
-}
-
-/**
- * Put cache-creation tokens into the TTL we actually sent.
- * If Anthropic omitted the 5m/1h split, or reported 5m after we sent 1h,
- * reclassify so pricing charges the 1h difference.
- */
-export function applyCacheTtlToUsage(usage, ttl = DEFAULT_CACHE_TTL) {
-  if (!usage || typeof usage !== 'object') return usage
-  const target = normalizeCacheTtl(ttl)
-  const out = { ...usage, cache_ttl: target }
-  if (usage.cache_creation && typeof usage.cache_creation === 'object') {
-    out.cache_creation = { ...usage.cache_creation }
-  }
-  const five = n(out.cache_creation_5m_tokens ?? out.cache_creation?.ephemeral_5m_input_tokens)
-  const hour = n(out.cache_creation_1h_tokens ?? out.cache_creation?.ephemeral_1h_input_tokens)
-  const create = n(out.cache_creation_input_tokens ?? out.cache_creation_tokens)
-  let total = five + hour
-  if (!total && create) total = create
-  if (!total) return out
-  if (target === '1h') {
-    out.cache_creation_1h_tokens = total
-    out.cache_creation_5m_tokens = 0
-    if (!out.cache_creation) out.cache_creation = {}
-    out.cache_creation.ephemeral_1h_input_tokens = total
-    out.cache_creation.ephemeral_5m_input_tokens = 0
-  } else {
-    out.cache_creation_5m_tokens = total
-    out.cache_creation_1h_tokens = 0
-    if (!out.cache_creation) out.cache_creation = {}
-    out.cache_creation.ephemeral_5m_input_tokens = total
-    out.cache_creation.ephemeral_1h_input_tokens = 0
-  }
-  return out
+/** Compatibility export: requested TTL is not evidence of upstream cache usage. */
+export function applyCacheTtlToUsage(usage) {
+  return usage
 }

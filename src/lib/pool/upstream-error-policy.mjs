@@ -330,7 +330,9 @@ function classifyUpstreamResultRaw(
         cooldownUntil: null,
       }
     }
-    return classifyOAuth401(hasRefresh, hay)
+    // Preserve upstream refresh classification, without replaying already delivered output.
+    const authPolicy = classifyOAuth401(hasRefresh, hay)
+    return result.committed ? { ...authPolicy, action: 'stop', retrySameAccount: false } : authPolicy
   }
 
   if (result.committed) {

@@ -19,6 +19,28 @@ describe('probe card uses persisted checks without claiming a fresh upstream pro
     expect(latestProbe(null, newer)).toBe(newer)
     expect(latestProbe()).toEqual({})
   })
+  it('formats structured probe failures without returning objects or private metadata', () => {
+    expect(
+      probeOutcome({
+        ok: false,
+        error: {
+          code: 'no_credential',
+          message: '尚未导入凭证',
+          token: 'DO_NOT_RENDER',
+        },
+      })
+    ).toBe('尚未导入凭证')
+    expect(
+      probeOutcome({
+        ok: false,
+        error: { code: 'no_credential', token: 'DO_NOT_RENDER' },
+      })
+    ).toBe('探测失败')
+    expect(probeOutcome({ ok: false, error: null })).toBe('探测失败')
+    expect(probeOutcome({ ok: false, error: ['private-data'] })).toBe(
+      '探测失败'
+    )
+  })
   it('shows unavailable and failure responses rather than generic success', () => {
     expect(probeOutcome({ ok: false, error: '暂无请求响应头用量' })).toBe(
       '暂无请求响应头用量'

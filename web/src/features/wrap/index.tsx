@@ -26,7 +26,10 @@ import { PageHeader } from '@/components/page-header'
 import { CardGridSkeleton } from '@/components/page-skeletons'
 import { QueryGate } from '@/components/query-gate'
 import { dashboardQueryOptions } from '@/features/overview/queries'
-import { dataplaneLabel } from '@/features/vm/dataplane-contract'
+import {
+  dataplaneLabel,
+  type KernelDataplane,
+} from '@/features/vm/dataplane-contract'
 import {
   inferenceEngineLabel,
   normalizeInferenceEngine,
@@ -60,6 +63,8 @@ function kernelPathLabel(p?: string) {
   const i = Math.max(
     parts.lastIndexOf('bin'),
     parts.lastIndexOf('wrap-cli'),
+    parts.lastIndexOf('wrap-fixed'),
+    parts.lastIndexOf('cc-fixed'),
     parts.lastIndexOf('crag')
   )
   if (i >= 0) return parts.slice(i).join('/')
@@ -76,13 +81,16 @@ function engineOf(vm: Vm) {
   return vm.resolved_inference_engine || vm.inference_engine || 'auto'
 }
 
-function selectedDataplane(
-  value: string | null | undefined
-): 'wrap' | 'cc' | 'crag' {
-  return value === 'cc' || value === 'crag' ? value : 'wrap'
+function selectedDataplane(value: string | null | undefined): KernelDataplane {
+  return value === 'wrap-fixed' ||
+    value === 'cc-fixed' ||
+    value === 'cc' ||
+    value === 'crag'
+    ? value
+    : 'wrap'
 }
 
-function dataplaneOf(vm: Vm): 'wrap' | 'cc' | 'crag' | '—' {
+function dataplaneOf(vm: Vm): KernelDataplane | '—' {
   if (isCodexVm(vm)) return '—'
   return selectedDataplane(vm.resolved_dataplane)
 }
@@ -95,7 +103,7 @@ function DataplaneOption({
   disabled,
   children,
 }: {
-  value: 'wrap' | 'cc' | 'crag'
+  value: KernelDataplane
   title: string
   desc: string
   current: boolean
@@ -245,9 +253,8 @@ export function WrapSamplePage() {
   const vms: Vm[] = dash.data?.vms || []
   const [restart, setRestart] = useState(true)
   const [selected, setSelected] = useState<string[]>([])
-  const [pendingDataplane, setPendingDataplane] = useState<
-    'wrap' | 'cc' | 'crag' | null
-  >(null)
+  const [pendingDataplane, setPendingDataplane] =
+    useState<KernelDataplane | null>(null)
   const [promoteId, setPromoteId] = useState<string | null>(null)
   const [makeOpen, setMakeOpen] = useState(false)
   const [glibcVm, setGlibcVm] = useState('')
@@ -392,7 +399,7 @@ export function WrapSamplePage() {
     onError: (error: Error) => toast.error(error.message),
   })
   const dataplane = useMutation({
-    mutationFn: (next: 'wrap' | 'cc' | 'crag') => {
+    mutationFn: (next: KernelDataplane) => {
       const ids = selected.filter((id) => {
         const vm = vms.find((item) => item.id === id)
         return Boolean(vm && !isCodexVm(vm))
@@ -417,13 +424,7 @@ export function WrapSamplePage() {
           `已切 ${next}，${report.ok_count || 0}/${report.total || 0} 槽成功`
         )
       } else {
-        toast.success(
-          next === 'crag'
-            ? '已切换到 crag + cc-node'
-            : next === 'cc'
-              ? '已切换到 cc-node + kernel'
-              : '已切换到 cli-node + kernel'
-        )
+        toast.success(`已切换到 ${dataplaneLabel(next)}`)
       }
       await invalidate()
     },
@@ -523,11 +524,13 @@ export function WrapSamplePage() {
         }
       >
         <p className='mb-4 max-w-3xl text-sm leading-relaxed text-muted-foreground'>
-          三种搭配，点卡片切换。默认是 <code>cli-node + kernel</code>
-          （一进程 20 native 槽）。<code>cc-node + kernel</code> 用同一份 wrap
-          kernel。<code>crag + cc-node</code> 用 crag kernel，claude_bin
-          指向仓内 cc-node。未勾选槽时改全局默认；勾选后只切这些 Claude
-          槽。Codex 不动。不改凭证、不删容器。
+          点卡片切换，建议先暂停业务请求。默认仍是{' '}
+          <code>cli-node + kernel</code>。<code>wrap-fixed</code> 与{' '}
+          <code>cc-fixed</code>
+          是已获准启用的修复版，分别使用独立固定搭配，不随原版更新被覆盖。 Crag
+          尚未通过 Chat
+          请求保留验收。未勾选槽时改全局默认（保留单槽覆盖）；勾选后只切这些
+          Claude 槽。Codex 不动。不改凭证、不删容器。
         </p>
         <Card className='mb-4'>
           <CardHeader>
@@ -537,19 +540,25 @@ export function WrapSamplePage() {
             <RadioGroup
               value={selectedDataplane(data?.dataplane)}
               onValueChange={(value) => {
-                if (value !== 'wrap' && value !== 'cc' && value !== 'crag')
+                if (
+                  value !== 'wrap' &&
+                  value !== 'wrap-fixed' &&
+                  value !== 'cc' &&
+                  value !== 'cc-fixed' &&
+                  value !== 'crag'
+                )
                   return
                 if (value === selectedDataplane(data?.dataplane)) return
                 setPendingDataplane(value)
               }}
               disabled={dataplane.isPending || hopBusy}
-              className='grid gap-3 lg:grid-cols-3'
+              className='grid gap-3 lg:grid-cols-2'
             >
               <DataplaneOption
                 value='wrap'
                 title='cli-node + kernel'
                 desc='默认。patched cli-node，一进程 20 native 槽。kernel.json.claude_bin 指向仓内 cli-node。'
-                current={data?.dataplane !== 'cc' && data?.dataplane !== 'crag'}
+                current={selectedDataplane(data?.dataplane) === 'wrap'}
                 disabled={!data?.ok}
               >
                 <KernelPayload payload={data?.kernel} />
@@ -561,9 +570,28 @@ export function WrapSamplePage() {
                 <Flag ok={data?.kernel_bin} label='kernel.bin' />
               </DataplaneOption>
               <DataplaneOption
+                value='wrap-fixed'
+                title='cli-node 修复版 + kernel'
+                desc='保留 caller system；独立的 v1.3.55 修复搭配。已通过提供的离线样例并获准启用，真实模型表现仍需观察。'
+                current={data?.dataplane === 'wrap-fixed'}
+                disabled={!data?.wrap_fixed?.ok}
+              >
+                <KernelPayload payload={data?.wrap_fixed?.kernel} />
+                <KernelPayload payload={data?.wrap_fixed?.cli} kind='cli' />
+                <p className='text-xs break-all text-muted-foreground'>
+                  {data?.wrap_fixed?.ok
+                    ? `CLI SHA256: ${data.wrap_fixed.cli?.sha256}`
+                    : data?.wrap_fixed?.error || '修复版文件未安装'}
+                </p>
+                <Flag
+                  ok={data?.wrap_fixed?.ok}
+                  label='独立固定搭配，原版仍保留'
+                />
+              </DataplaneOption>
+              <DataplaneOption
                 value='cc'
                 title='cc-node + kernel'
-                desc='同一份 wrap kernel。claude_bin 指向仓内 cc-node。'
+                desc='原版 cc-node + wrap kernel，保留作回退。需要已验收的修复请选 cc-node 修复版。'
                 current={data?.dataplane === 'cc'}
                 disabled={!data?.cc_node?.size}
               >
@@ -576,9 +604,28 @@ export function WrapSamplePage() {
                 <Flag ok={data?.kernel_bin} label='kernel.bin' />
               </DataplaneOption>
               <DataplaneOption
+                value='cc-fixed'
+                title='cc-node 修复版 + kernel'
+                desc='基于已验收 CC r3，仅去掉离线入口限制；保留初始化、system、workload 和 API 客户端修复。Crag 不包含在此批准内。'
+                current={data?.dataplane === 'cc-fixed'}
+                disabled={!data?.cc_fixed?.ok}
+              >
+                <KernelPayload payload={data?.cc_fixed?.kernel} />
+                <KernelPayload payload={data?.cc_fixed?.cli} kind='cli' />
+                <p className='text-xs break-all text-muted-foreground'>
+                  {data?.cc_fixed?.ok
+                    ? `CLI SHA256: ${data.cc_fixed.cli?.sha256}`
+                    : data?.cc_fixed?.error || '修复版文件未安装'}
+                </p>
+                <Flag
+                  ok={data?.cc_fixed?.ok}
+                  label='独立固定搭配，原版仍保留'
+                />
+              </DataplaneOption>
+              <DataplaneOption
                 value='crag'
                 title='crag + cc-node'
-                desc='crag kernel，一进程多槽。claude_bin 指向仓内 cc-node。'
+                desc='原版 Crag。当前 Chat 请求存在 system 降级、历史与参数丢失，尚未批准修复版转正。'
                 current={data?.dataplane === 'crag'}
                 disabled={!data?.crag?.ok || !data?.cc_node?.size}
               >
@@ -786,20 +833,8 @@ export function WrapSamplePage() {
         onOpenChange={(open) => {
           if (!open) setPendingDataplane(null)
         }}
-        title={
-          pendingDataplane === 'crag'
-            ? '切到 crag + cc-node？'
-            : pendingDataplane === 'cc'
-              ? '切到 cc-node + kernel？'
-              : '切到 cli-node + kernel？'
-        }
-        desc={
-          pendingDataplane === 'crag'
-            ? `${selected.length ? `所选 ${selected.length} 个 Claude 槽` : '全部 Claude 槽'}将铺 crag kernel，claude_bin 指向 /home/kincli/.kin/cc-node，并重启 rust kernel。Codex 不动。不改凭证、不删容器。`
-            : pendingDataplane === 'cc'
-              ? `${selected.length ? `所选 ${selected.length} 个 Claude 槽` : '全部 Claude 槽'}将铺 wrap kernel 和 cc-node，并重启 rust kernel。Codex 不动。不改凭证、不删容器。`
-              : `${selected.length ? `所选 ${selected.length} 个 Claude 槽` : '全部 Claude 槽'}将铺 wrap kernel 和 cli-node，并重启 rust kernel。Codex 不动。不改凭证、不删容器。`
-        }
+        title={`切到 ${dataplaneLabel(pendingDataplane)}？`}
+        desc={`${selected.length ? `所选 ${selected.length} 个 Claude 槽` : '继承全局默认的 Claude 槽'}将使用 ${dataplaneLabel(pendingDataplane)}。${pendingDataplane === 'wrap-fixed' || pendingDataplane === 'cc-fixed' ? '使用独立固定搭配，原版文件保留。' : ''}${restart ? '将重启对应 kernel，请先暂停业务请求。' : '仅更新磁盘文件，稍后重启 kernel 才会生效。'}Codex 不动，不改凭证、不删容器。`}
         confirmText='切换'
         cancelBtnText='取消'
         isLoading={dataplane.isPending}

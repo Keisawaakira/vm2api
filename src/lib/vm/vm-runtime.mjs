@@ -15,7 +15,7 @@ import { buildWorkerTelemetry } from './worker-telemetry.mjs'
 import { kernelBinPath, writeKernelConfig } from '../transport/rust-kernel-supervisor.mjs'
 import { assertCliHopAllowed, resolveOfficialCcInference } from './slot-engine.mjs'
 import { ensureSlotClaudeOwnership, chownSlotRuntimeFile, replaceSlotOwnedFile } from '../oauth/oauth-credentials.mjs'
-import { materializeWrapCli } from './wrap-cli-runtime.mjs'
+import { materializeSlotDataplane, configuredSlotDataplane } from './wrap-cli-runtime.mjs'
 import { ensureGuestMachineIdFile } from '../identity/workstation-fingerprint.mjs'
 import { ensureProxyEgress, isLocalEgressProxy, slotNetworkForVm } from './egress.mjs'
 import { toHostPath } from './host-path.mjs'
@@ -433,8 +433,14 @@ export function startVmRuntime(vm, projectRoot, { recreate = false, routing } = 
     return { ok: true, action: 'already-running', runtime: vm.runtime }
   }
   try {
-    materializeWrapCli(projectRoot, vm, { uid: runtimeUidNum(vm), gid: Number(GID) })
-  } catch {}
+    const dataplane = configuredSlotDataplane(projectRoot, vm, routing)
+    if (dataplane) {
+      const laid = materializeSlotDataplane(projectRoot, vm, dataplane, { uid: runtimeUidNum(vm), gid: Number(GID) })
+      if (!laid.ok && (dataplane === 'wrap-fixed' || dataplane === 'cc-fixed' || dataplane === 'crag')) return laid
+    }
+  } catch (error) {
+    return { ok: false, code: 'dataplane_materialize_failed', error: String(error?.message || error) }
+  }
   const wrapKernel = path.join(home, '.kin', 'kin-kernel')
   const kernelBin = kernelBinPath()
   const mountKernel = !!kernelBin && fs.existsSync(kernelBin)

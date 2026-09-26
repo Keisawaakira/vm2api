@@ -2,7 +2,6 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   applyCacheTtlToBody,
-  applyCacheTtlToUsage,
   clearConversationCacheTtls,
   DEFAULT_CACHE_TTL,
   enforceCacheTtlOrder,
@@ -10,27 +9,33 @@ import {
   pinConversationCacheTtl,
   resolveCacheTtl,
   stripIllegalCacheControlFields,
+  applyCacheBreakpoints,
 } from '../../src/lib/protocol/cache-ttl.mjs'
-import { calculateCost } from '../../src/lib/admin/pricing.mjs'
+import { usesShortClaudeCache } from '../../src/lib/protocol/cache-request.mjs'
+import { workerEnvelope } from '../../src/lib/transport/go-worker-client.mjs'
+const block = (ttl) => ({ type: 'text', text: 'prefix', cache_control: { type: 'ephemeral', ...(ttl ? { ttl } : {}) } })
 
-test('cache ttl accepts only 1h or 5m output values', () => {
-  assert.equal(normalizeCacheTtl(undefined), DEFAULT_CACHE_TTL)
+test('resolved wire TTL stays 5m/1h; auto uses credential kind', () => {
   assert.equal(DEFAULT_CACHE_TTL, '1h')
-  assert.equal(normalizeCacheTtl('5m'), '5m')
-  assert.equal(normalizeCacheTtl('1h'), '1h')
-  assert.equal(normalizeCacheTtl('bogus'), '1h')
+  for (const [value, expected] of [
+    ['5min', '5m'],
+    ['1hr', '1h'],
+    [undefined, '1h'],
+    ['bogus', '1h'],
+  ])
+    assert.equal(normalizeCacheTtl(value), expected)
+  assert.equal(resolveCacheTtl({ routing: { compatibility: { cache_ttl: 'auto' } }, credentialMode: 'apikey' }), '5m')
+  assert.equal(resolveCacheTtl({ routing: { compatibility: { cache_ttl: 'auto' } }, credentialMode: 'oauth' }), '1h')
 })
-
-test('header overrides routing default', () => {
+test('header chooses default; highest inbound tier prevents new short prefix before explicit 1h', () => {
+  assert.equal(resolveCacheTtl({ headers: { 'x-kin-cache-ttl': '5m' }, body: { system: [block('1h')] } }), '5m')
   assert.equal(
-    resolveCacheTtl({ headers: { 'x-kin-cache-ttl': '1h' }, routing: { compatibility: { cache_ttl: '5m' } } }),
+    resolveCacheTtl({ body: { system: [block('1h')] }, routing: { compatibility: { cache_ttl: '5m' } } }),
     '1h',
   )
-  assert.equal(resolveCacheTtl({ headers: {}, routing: { compatibility: { cache_ttl: '1h' } } }), '1h')
-  assert.equal(resolveCacheTtl({ headers: {}, routing: { compatibility: {} } }), '1h')
-  assert.equal(resolveCacheTtl({ headers: {}, routing: { compatibility: { cache_ttl: '5m' } } }), '5m')
+  assert.equal(resolveCacheTtl({ body: { system: [block('5m')] } }), '5m')
+  assert.equal(resolveCacheTtl({ officialTraffic: true, body: { system: [block('5m')] } }), '5m')
 })
-
 test('ttl-less markers (official Claude Code) take the settings menu value', () => {
   const body = {
     system: [{ type: 'text', text: 's', cache_control: { type: 'ephemeral' } }],
@@ -58,183 +63,101 @@ test('a conversation keeps its first TTL until that cache would have expired', (
   assert.equal(pinConversationCacheTtl('', '1h', t0), '1h', 'no key means no pin')
   clearConversationCacheTtls()
 })
-
-test('explicit inbound 5m or 1h overrides the console default', () => {
+test('missing TTL is 5m for order checking and automatic top-level boundary is last', () => {
+  const body = {
+    cache_control: { type: 'ephemeral', ttl: '5m' },
+    tools: [{ name: 'f', cache_control: { type: 'ephemeral', ttl: '1h' } }],
+    system: [block('1h')],
+    messages: [{ role: 'user', content: [block()] }],
+  }
+  const out = enforceCacheTtlOrder(body)
+  assert.equal(out.tools[0].cache_control.ttl, '1h')
+  assert.equal(out.system[0].cache_control.ttl, '1h')
+  const invalid = enforceCacheTtlOrder({ ...body, cache_control: { type: 'ephemeral', ttl: '1h' } })
+  assert.equal(invalid.cache_control.ttl, '5m')
+})
+test('public scope stripping is independent from TTL policy', () => {
+  const body = { system: [{ ...block('5m'), cache_control: { type: 'ephemeral', ttl: '5m', scope: 'global' } }] }
+  assert.deepEqual(stripIllegalCacheControlFields(body).system[0].cache_control, { type: 'ephemeral', ttl: '5m' })
+  assert.equal(applyCacheTtlToBody(body, '1h').system[0].cache_control.ttl, '5m')
+})
+test('probes/helpers get short TTL; ordinary text is not classified as internal helper', () => {
+  const probe = { max_tokens: 1, messages: [{ role: 'user', content: 'probe' }], system: [block('1h')] }
+  assert.equal(resolveCacheTtl({ body: probe }), '5m')
+  const out = applyCacheTtlToBody(probe, '1h', { short: usesShortClaudeCache({ body: probe }) })
+  assert.deepEqual(out.system[0].cache_control, { type: 'ephemeral' })
+  assert.equal(usesShortClaudeCache({ body: { messages: [{ role: 'user', content: 'Return a short title' }] } }), false)
+  assert.equal(usesShortClaudeCache({ body: { system: 'Return a short title' } }), true)
   assert.equal(
-    resolveCacheTtl({
-      headers: {},
-      body: { tools: [{ name: 'Read', cache_control: { type: 'ephemeral', ttl: '1h' } }] },
-      routing: { compatibility: { cache_ttl: '5m' } },
-    }),
-    '1h',
-  )
-  assert.equal(
-    resolveCacheTtl({
-      headers: {},
-      body: { tools: [{ name: 'Read', cache_control: { type: 'ephemeral', ttl: '5m' } }] },
-      routing: { compatibility: { cache_ttl: '1h' } },
-    }),
-    '5m',
-  )
-  assert.equal(
-    resolveCacheTtl({
-      headers: { 'x-kin-cache-ttl': '5m' },
-      body: { system: [{ cache_control: { type: 'ephemeral', ttl: '1h' } }] },
-    }),
-    '5m',
+    usesShortClaudeCache({ body: { max_tokens: 1, messages: [{ role: 'user', content: 'explain physics' }] } }),
+    false,
   )
 })
-
-test('stripIllegalCacheControlFields drops scope on system and tools', () => {
-  const out = stripIllegalCacheControlFields({
-    system: [
-      {
-        type: 'text',
-        text: 'expansion',
-        cache_control: { type: 'ephemeral', ttl: '1h', scope: 'global' },
-      },
-    ],
-    tools: [{ name: 'Read', cache_control: { type: 'ephemeral', ttl: '1h', scope: 'global' } }],
-  })
-  assert.deepEqual(out.system[0].cache_control, { type: 'ephemeral', ttl: '1h' })
-  assert.deepEqual(out.tools[0].cache_control, { type: 'ephemeral', ttl: '1h' })
-})
-
-test('applyCacheTtlToBody default 5m overwrites leftover system 1h', () => {
-  const out = applyCacheTtlToBody(
-    {
-      system: [{ type: 'text', text: 'x', cache_control: { type: 'ephemeral', ttl: '1h', scope: 'global' } }],
-    },
-    '5m',
+test('subagent default is short unless it explicitly opts into 1h', () => {
+  const headers = { 'X-Claude-Code-Agent-Id': 'sub' }
+  assert.equal(resolveCacheTtl({ headers }), '5m')
+  assert.equal(resolveCacheTtl({ headers, body: { system: [block('1h')] } }), '1h')
+  assert.equal(
+    usesShortClaudeCache({ headers: { ...headers, 'anthropic-beta': 'extended-cache-ttl-2025-04-11' } }),
+    false,
   )
-  assert.deepEqual(out.system[0].cache_control, { type: 'ephemeral', ttl: '5m' })
+  assert.equal(usesShortClaudeCache({ body: { messages: [{ role: 'user', content: 'cc_is_subagent=true' }] } }), false)
 })
-
-test('tool 5m then system 1h is downgraded so Anthropic order stays legal', () => {
-  const live = {
-    tools: [
-      { name: 'search' },
-      { name: 'google_maps', cache_control: { type: 'ephemeral', ttl: '5m' } },
-      { name: 'web_search' },
-    ],
-    system: [
-      { type: 'text', text: 'billing' },
-      { type: 'text', text: 'identity' },
-      { type: 'text', text: 'expansion', cache_control: { type: 'ephemeral', ttl: '1h', scope: 'global' } },
-      { type: 'text', text: 'env', cache_control: { type: 'ephemeral', ttl: '5m' } },
-    ],
+test('fill preserves historical anchors and adds only the last eligible message', () => {
+  const body = {
+    system: [block('1h')],
+    tools: [{ name: 'f' }],
     messages: [
-      {
-        role: 'user',
-        content: [{ type: 'text', text: 'hi', cache_control: { type: 'ephemeral', ttl: '5m' } }],
-      },
+      { role: 'user', content: [block('1h')] },
+      { role: 'assistant', content: [{ type: 'text', text: 'ok' }] },
+      { role: 'user', content: 'next' },
     ],
   }
-  const out = enforceCacheTtlOrder(live)
-  assert.equal(out.tools[1].cache_control.ttl, '5m')
-  assert.deepEqual(out.system[2].cache_control, { type: 'ephemeral', ttl: '5m' })
-  assert.deepEqual(out.system[3].cache_control, { type: 'ephemeral', ttl: '5m' })
-})
-
-test('a leading 1h is removed when any later breakpoint is 5m', () => {
-  const out = enforceCacheTtlOrder({
-    system: [{ type: 'text', text: 'early', cache_control: { type: 'ephemeral', ttl: '1h' } }],
-    messages: [{ role: 'user', content: [{ type: 'text', text: 'later', cache_control: { type: 'ephemeral' } }] }],
-  })
-  assert.deepEqual(out.system[0].cache_control, { type: 'ephemeral', ttl: '5m' })
-  assert.deepEqual(out.messages[0].content[0].cache_control, { type: 'ephemeral' })
-})
-
-test('applyCacheTtlToBody rewrites every cache marker to selected 5m', () => {
-  const out = applyCacheTtlToBody(
-    {
-      cache_control: { type: 'ephemeral', ttl: '1h' },
-      system: [{ type: 'text', text: 'x', cache_control: { type: 'ephemeral', ttl: '1h', scope: 'global' } }],
-      tools: [{ name: 'Read', cache_control: { type: 'ephemeral', ttl: '1h' } }],
-      messages: [
-        { role: 'user', content: [{ type: 'text', text: 'hi', cache_control: { type: 'ephemeral', ttl: '1h' } }] },
-      ],
-    },
-    '5m',
-  )
-  assert.equal(out.cache_control.ttl, '5m')
-  assert.equal(out.system[0].cache_control.ttl, '5m')
-  assert.equal(out.tools[0].cache_control.ttl, '5m')
-  assert.equal(out.messages[0].content[0].cache_control.ttl, '5m')
-})
-
-test('applyCacheTtlToBody rewrites every cache marker to selected 1h', () => {
-  const out = applyCacheTtlToBody(
-    {
-      system: [{ type: 'text', text: 'x', cache_control: { type: 'ephemeral', ttl: '5m', scope: 'global' } }],
-      tools: [{ name: 'Read', cache_control: { type: 'ephemeral' } }],
-      messages: [
-        { role: 'user', content: [{ type: 'text', text: 'hi', cache_control: { type: 'ephemeral', ttl: '5m' } }] },
-      ],
-    },
-    '1h',
-  )
-  assert.equal(out.system[0].cache_control.ttl, '1h')
-  assert.equal(out.tools[0].cache_control.ttl, '1h')
+  const out = applyCacheBreakpoints(body, { config: { messages: 'rewrite' }, ttl: '5m' })
   assert.equal(out.messages[0].content[0].cache_control.ttl, '1h')
+  assert.equal(out.messages[1].content[0].cache_control, undefined)
+  assert.equal(out.messages[2].content[0].cache_control.ttl, '1h')
+  assert.equal(out.tools[0].cache_control, undefined)
 })
-
-test('stripIllegalCacheControlFields drops ephemeral.scope', () => {
-  const out = stripIllegalCacheControlFields({
-    system: [
-      {
-        type: 'text',
-        text: 'agent',
-        cache_control: { type: 'ephemeral', ttl: '5m', scope: 'global' },
-      },
-    ],
-    tools: [{ name: 'Read', cache_control: { type: 'ephemeral', ttl: '5m', scope: 'global' } }],
-    messages: [
-      {
-        role: 'user',
-        content: [{ type: 'text', text: 'hi', cache_control: { type: 'ephemeral', ttl: '5m', scope: 'global' } }],
-      },
-    ],
+test('a covering system does not bypass deferred-tool cache validation', () => {
+  const out = applyCacheBreakpoints({
+    system: [block('1h')],
+    tools: [{ name: 'lazy', defer_loading: true, cache_control: { type: 'ephemeral', ttl: '1h' } }],
   })
-  assert.deepEqual(out.system[0].cache_control, { type: 'ephemeral', ttl: '5m' })
-  assert.deepEqual(out.tools[0].cache_control, { type: 'ephemeral', ttl: '5m' })
-  assert.deepEqual(out.messages[0].content[0].cache_control, { type: 'ephemeral', ttl: '5m' })
+  assert.equal(out.tools[0].cache_control, undefined)
 })
 
-test('unclassified cache_creation without ttl bills the default 1h rate', () => {
-  const asDefault = calculateCost({ cache_creation_tokens: 1_000_000 }, 'claude-sonnet-5')
-  const as5m = calculateCost({ cache_creation_tokens: 1_000_000, cache_ttl: '5m' }, 'claude-sonnet-5')
-  const as1h = calculateCost({ cache_creation_tokens: 1_000_000, cache_ttl: '1h' }, 'claude-sonnet-5')
-  assert.equal(asDefault.cache_creation_cost, 4)
-  assert.equal(as5m.cache_creation_cost, 2.5)
-  assert.equal(as1h.cache_creation_cost, 4)
-  assert.equal(as1h.total_cost - as5m.total_cost, 1.5)
-})
-
-test('applyCacheTtlToUsage reclassifies a 5m report after we sent 1h', () => {
-  const out = applyCacheTtlToUsage(
+test('thinking tail is not a rolling breakpoint host', () => {
+  const out = applyCacheBreakpoints(
     {
-      cache_creation_input_tokens: 2000,
-      cache_creation: { ephemeral_5m_input_tokens: 2000, ephemeral_1h_input_tokens: 0 },
+      messages: [
+        { role: 'user', content: 'hi' },
+        { role: 'assistant', content: [{ type: 'thinking', thinking: 'x' }] },
+      ],
     },
-    '1h',
+    { config: { messages: 'fill' } },
   )
-  assert.equal(out.cache_creation_1h_tokens, 2000)
-  assert.equal(out.cache_creation_5m_tokens, 0)
+  assert.equal(out.messages[0].content[0].cache_control.type, 'ephemeral')
+  assert.equal(out.messages[1].content[0].cache_control, undefined)
+})
+test('native CLI envelope carries the pinned conversation TTL under upstream policy', () => {
+  const out = workerEnvelope({
+    body: { model: 'claude-sonnet-5', messages: [{ role: 'user', content: 'hello' }] },
+    cacheTtl: '1h',
+    preserveCacheBreakpoints: false,
+  })
   assert.equal(out.cache_ttl, '1h')
+  assert.equal(out.preserve_cache_breakpoints, false)
 })
 
-test('default 5m usage stays in the 1.25x bucket', () => {
-  const out = applyCacheTtlToUsage(
-    {
-      cache_creation_input_tokens: 2000,
-      cache_creation: { ephemeral_5m_input_tokens: 2000, ephemeral_1h_input_tokens: 0 },
-    },
-    '5m',
-  )
-  assert.equal(out.cache_creation_5m_tokens, 2000)
-  assert.equal(out.cache_creation_1h_tokens, 0)
-  assert.equal(out.cache_ttl, '5m')
-  const billed = calculateCost(out, 'claude-sonnet-5')
-  assert.equal(billed.cache_creation_cost, 0.005)
+test('kernel preservation envelope cannot also force TTL rewrite', () => {
+  const out = workerEnvelope({
+    body: { model: 'claude-sonnet-5', system: [block('1h')], messages: [{ role: 'user', content: [block('5m')] }] },
+    cacheTtl: '1h',
+    preserveCacheBreakpoints: true,
+  })
+  assert.equal(out.cache_ttl, null)
+  assert.equal(out.preserve_cache_breakpoints, true)
+  assert.equal(out.body.system[0].cache_control.ttl, '1h')
+  assert.equal(out.body.messages[0].content[0].cache_control.ttl, '5m')
 })

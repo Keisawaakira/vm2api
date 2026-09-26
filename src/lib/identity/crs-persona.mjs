@@ -12,7 +12,7 @@
  *             If the caller already sent an agent prompt, that text occupies
  *             the official agent slot. Console label: 官方提示词.
  *   zero    — 与 official_full 同 3 槽：billing（prompt_version 藏短身份）+ 零宽 identity 槽
- *             + 零宽 agent 槽（5m cache）。无 agent 长文、无 Environment。Caller leftover 仍追加。
+ *             + 零宽 agent 槽（缓存 TTL 跟随策略）。无 agent 长文、无 Environment。Caller leftover 仍追加。
  *             客户端 usage 遮罩前三块。槽位 persona_preset 会覆盖全局，测 zero 必须槽上也是 zero。
  *   append  — attach the official identity line to the caller system
  *   none    — leave system / messages untouched
@@ -1646,6 +1646,27 @@ function applyTemplatePersona(
       model: modelId,
     }),
   )
+  // A plain caller placeholder must not flatten away explicit cache boundaries.
+  if (!midSystem && leftover && Array.isArray(body.system) && blocks.some((b) => b.text === '{{caller_system}}')) {
+    const callerBlocks = body.system.flatMap((source) => {
+      const text = parkableSystemTexts([source])
+        .filter((t) => !usesCallerAgent || !looksLikeAgentPrompt(t))
+        .join('\n\n')
+      if (!text) return []
+      return [{ type: 'text', text, ...(source?.cache_control ? { cache_control: { ...source.cache_control } } : {}) }]
+    })
+    const index = system.findIndex((b) => b.text === leftover)
+    if (
+      index >= 0 &&
+      callerBlocks.some((b) => b.cache_control) &&
+      callerBlocks.map((b) => b.text).join('\n\n') === leftover
+    ) {
+      const templateControl = system[index].cache_control
+      const last = callerBlocks.at(-1)
+      if (templateControl && !last.cache_control) last.cache_control = { ...templateControl }
+      system.splice(index, 1, ...callerBlocks)
+    }
+  }
   let outMessages = messages
   if (midSystem) {
     outMessages = wrapExistingMidConversationSystem(insertMidConversationSystem(outMessages, leftover))

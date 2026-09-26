@@ -177,7 +177,7 @@ import {
   describeWrapSample,
   makeWrapSample,
   materializeSlotDataplane,
-  materializeWrapCli,
+  preflightDataplane,
   replaceCragKernelBinary,
   replaceKernelBinary,
   replaceCliNodeBinary,
@@ -234,26 +234,32 @@ async function syncInstalledKernels({ project, routingConfig, body = {} }) {
   const wanted = Array.isArray(body.ids) ? new Set(body.ids.map(String)) : null
   const vms = wanted ? all.filter((vm) => wanted.has(vm.id)) : all
   const report = syncWrapSample(project, vms, { routing: routingConfig })
-  if (body.restart !== false) {
-    for (const item of report.items || []) {
-      if (!item.ok) continue
-      const vm = getVm(project, item.id)
-      if (!vm || vm.status !== 'running') {
-        item.kernel = { ok: true, skipped: true, reason: 'vm_stopped' }
-        continue
-      }
-      if (resolveInferenceEngine(vm, routingConfig) !== 'rust') continue
+  for (const item of report.items || []) {
+    if (!item.ok) continue
+    const vm = getVm(project, item.id)
+    if (!vm || resolveInferenceEngine(vm, routingConfig) !== 'rust') continue
+    try {
+      // Disk configuration must select the same pair even when restart is deferred.
       writeKernelConfig(project, vm, { routing: routingConfig, timezone: vm.timezone })
-      const exec = slotExec(project, vm)
-      item.kernel = await restartRustKernel(exec).catch((e) => ({
-        ok: false,
-        error: String(e?.message || e).slice(0, 200),
-      }))
-      if (!item.kernel?.ok) {
-        item.ok = false
-        item.code = 'kernel_restart_failed'
-        item.error = item.kernel?.error || item.kernel?.reason || 'kernel restart failed'
-      }
+    } catch (error) {
+      item.ok = false
+      item.code = 'kernel_config_failed'
+      item.error = String(error?.message || error)
+      continue
+    }
+    if (body.restart === false || vm.status !== 'running') {
+      item.kernel = { ok: true, skipped: true, reason: body.restart === false ? 'restart_disabled' : 'vm_stopped' }
+      continue
+    }
+    const exec = slotExec(project, vm)
+    item.kernel = await restartRustKernel(exec).catch((e) => ({
+      ok: false,
+      error: String(e?.message || e).slice(0, 200),
+    }))
+    if (!item.kernel?.ok) {
+      item.ok = false
+      item.code = 'kernel_restart_failed'
+      item.error = item.kernel?.error || item.kernel?.reason || 'kernel restart failed'
     }
   }
   const failed = (report.items || []).filter((item) => !item.ok)
@@ -280,7 +286,18 @@ export function createPanelHandler(ctx) {
   const requestLog = ctx.requestLog
   const backupService = ctx.backupService
   const stats = ctx.stats
-  const persistRoutingPatch = (...args) => ctx.persistRoutingPatch(...args)
+  const persistRoutingPatch = (body, ...args) => {
+    if (body?.inference && Object.prototype.hasOwnProperty.call(body.inference, 'dataplane')) {
+      const selected = parseKernelDataplanePatch(body.inference.dataplane)
+      if (!selected.ok || !selected.value)
+        throw Object.assign(new Error(selected.error || 'A production dataplane is required'), {
+          code: 'invalid_dataplane',
+        })
+      const checked = preflightDataplane(cfg.paths.project, selected.value)
+      if (!checked.ok) throw Object.assign(new Error(checked.error), { code: checked.code })
+    }
+    return ctx.persistRoutingPatch(body, ...args)
+  }
   const applyVmConcurrency = (...args) => ctx.applyVmConcurrency(...args)
   const applyVmRpm = (...args) => ctx.applyVmRpm(...args)
   const applyVmSessionSlots = (...args) => ctx.applyVmSessionSlots(...args)
@@ -429,9 +446,15 @@ export function createPanelHandler(ctx) {
     const targetEngine = resolveInferenceEngine(desired, ctx.routingConfig)
     const previousDataplane = resolveKernelDataplane(current, ctx.routingConfig)
     const targetDataplane = resolveKernelDataplane(desired, ctx.routingConfig)
+    if (previousDataplane !== targetDataplane && !isCodexVm(desired)) {
+      const checked = preflightDataplane(cfg.paths.project, targetDataplane)
+      if (!checked.ok) return { ok: false, id, code: checked.code, error: checked.error }
+    }
     let switched = null
     if (Object.prototype.hasOwnProperty.call(patch, 'inference_engine') && previousEngine !== targetEngine) {
-      switched = await switchSlotInferenceEngine(desired, cfg.paths.project, targetEngine)
+      switched = await switchSlotInferenceEngine(desired, cfg.paths.project, targetEngine, {
+        routing: ctx.routingConfig,
+      })
       if (!switched.ok) {
         return { ok: false, id, code: switched.code || 'engine_switch_failed', error: switched.error, switch: switched }
       }
@@ -500,21 +523,31 @@ export function createPanelHandler(ctx) {
     })
   }
 
-  function restoreRoutingRuntime(previous) {
+  function restoreRoutingRuntime(previous, previousLogging) {
     ctx.routingConfig = previous
     setManualScheduleWins(ctx.routingConfig.pool?.manual_schedule_wins)
     ctx.healthMonitor?.setConfig(ctx.routingConfig.health_probe)
     ctx.usageProbeMonitor?.setConfig(ctx.routingConfig.usage_probe)
     ctx.notifyMonitor?.setConfig(ctx.routingConfig.notify)
-    if (ctx.routingConfig.logging) {
+    // The prior file may omit logging or differ from environment-derived live settings.
+    const logging = previousLogging || ctx.routingConfig.logging
+    if (logging) {
       requestLog.setConfig({
-        mode: ctx.routingConfig.logging.mode,
-        retainDays: ctx.routingConfig.logging.retain_days,
-        debugRetainDays: ctx.routingConfig.logging.debug_retain_days,
-        maxMb: ctx.routingConfig.logging.max_mb,
-        mutedErrorClasses: ctx.routingConfig.logging.muted_error_classes,
+        mode: logging.mode,
+        retainDays: logging.retain_days,
+        debugRetainDays: logging.debug_retain_days,
+        rawNonstreamDebug: logging.raw_nonstream_debug === true,
+        offlineKernelProbe: logging.offline_kernel_probe === true,
+        offlineKernelDataplane: logging.offline_kernel_dataplane || 'current',
+        maxMb: logging.max_mb,
+        mutedErrorClasses: logging.muted_error_classes,
       })
-    }
+    } else
+      requestLog?.setConfig?.({
+        rawNonstreamDebug: false,
+        offlineKernelProbe: false,
+        offlineKernelDataplane: 'current',
+      })
     stickyRouter.reloadConfig(ctx.routingConfig)
     accountQuota.reloadConfig(ctx.routingConfig)
     ctx.poolScheduler?.reloadConfig?.(poolSchedulerConfig())
@@ -526,6 +559,7 @@ export function createPanelHandler(ctx) {
     const target = normalizeInferenceConfig({ ...(ctx.routingConfig.inference || {}), ...body.inference }).engine
     if (previous === target) return { ok: true, changed: false, items: [] }
     const previousRoutingConfig = structuredClone(ctx.routingConfig)
+    const previousLogging = requestLog?.snapshot?.()
     return switchInheritedInferenceEngines({
       projectRoot: cfg.paths.project,
       previousEngine: previous,
@@ -534,12 +568,30 @@ export function createPanelHandler(ctx) {
         try {
           return persistRoutingPatch(body)
         } catch (error) {
-          restoreRoutingRuntime(previousRoutingConfig)
+          restoreRoutingRuntime(previousRoutingConfig, previousLogging)
           if (body.pool || body.failover) initPoolRuntime()
           throw error
         }
       },
     })
+  }
+
+  async function syncChangedRoutingDataplane(previous) {
+    if (resolveKernelDataplane({}, previous) === resolveKernelDataplane({}, ctx.routingConfig)) return null
+    // Only inherited slots follow a default change. Explicit VM overrides stay put.
+    const ids = listVms(cfg.paths.project)
+      .map(({ id }) => getVm(cfg.paths.project, id))
+      .filter((vm) => vm && !isCodexVm(vm) && !vm.dataplane)
+      .map((vm) => vm.id)
+    try {
+      return await syncInstalledKernels({
+        project: cfg.paths.project,
+        routingConfig: ctx.routingConfig,
+        body: { ids, restart: true },
+      })
+    } catch (error) {
+      return { ok: false, code: 'dataplane_sync_failed', error: String(error?.message || error) }
+    }
   }
 
   async function oauthStatusWithWorker(id = null) {
@@ -591,10 +643,20 @@ export function createPanelHandler(ctx) {
     if (p === '/admin/routing' && (req.method === 'PUT' || req.method === 'POST')) {
       if (!requireAuth(req, res)) return
       const body = await readBody(req, cfg.limits.max_body_bytes)
-      const applied = persistRoutingPatch(body)
-      return json(res, 200, {
-        ok: true,
+      const previousRoutingConfig = structuredClone(ctx.routingConfig)
+      const previousLogging = requestLog?.snapshot?.()
+      let applied
+      try {
+        applied = persistRoutingPatch(body)
+      } catch (error) {
+        restoreRoutingRuntime(previousRoutingConfig, previousLogging)
+        throw error
+      }
+      const dataplaneRuntime = await syncChangedRoutingDataplane(previousRoutingConfig)
+      return json(res, dataplaneRuntime?.ok === false ? 503 : 200, {
+        ok: dataplaneRuntime?.ok !== false,
         routing: publicRoutingNotify(ctx.routingConfig),
+        ...(dataplaneRuntime ? { dataplane_runtime: dataplaneRuntime, routing_committed: true } : {}),
         applied_concurrency: applied.concurrency,
         applied_rpm: applied.rpm,
       })
@@ -1098,6 +1160,66 @@ export function createPanelHandler(ctx) {
           q: u.searchParams.get('q') || null,
           owner_user_id: panelIdentity(req).role === 'user' ? req.panelUserId : u.searchParams.get('user_id') || null,
         }
+        if (u.searchParams.get('include_raw') === '1') {
+          if (panelIdentity(req).role !== 'admin')
+            return json(res, 403, {
+              ok: false,
+              error: { code: 'raw_admin_required', message: 'Raw diagnostics require admin access' },
+            })
+          if (format !== 'jsonl')
+            return json(res, 400, {
+              ok: false,
+              error: { code: 'raw_jsonl_required', message: 'Raw export supports JSONL only' },
+            })
+          const exported = requestLog.exportRawRows({
+            ...filters,
+            request_id: u.searchParams.get('request_id') || null,
+          })
+          const { lines, total, bytes, unavailable, oversized, byteLimited, rowLimited } = exported
+          if (res.destroyed) return
+          res.writeHead(200, {
+            'content-type': 'application/x-ndjson; charset=utf-8',
+            'content-disposition': 'attachment; filename="vm2api-raw-debug.jsonl"',
+            'cache-control': 'no-store',
+            'access-control-expose-headers':
+              'content-disposition, x-kin-export-count, x-kin-export-total, x-kin-export-bytes, x-kin-export-unavailable, x-kin-export-oversized, x-kin-export-byte-limited, x-kin-export-row-limited, x-kin-export-truncated',
+            'x-kin-export-count': String(lines.length),
+            'x-kin-export-total': String(total),
+            'x-kin-export-bytes': String(bytes),
+            'x-kin-export-unavailable': String(unavailable),
+            'x-kin-export-oversized': String(oversized),
+            'x-kin-export-byte-limited': String(byteLimited),
+            'x-kin-export-row-limited': String(rowLimited),
+            'x-kin-export-truncated': unavailable + oversized + byteLimited + rowLimited > 0 ? '1' : '0',
+          })
+          for (const line of lines) {
+            if (res.destroyed || res.writableEnded) break
+            if (!res.write(line)) {
+              const drained = await new Promise((resolve) => {
+                const cleanup = () => {
+                  res.off('drain', done)
+                  res.off('close', stopped)
+                  res.off('error', stopped)
+                }
+                const done = () => {
+                  cleanup()
+                  resolve(true)
+                }
+                const stopped = () => {
+                  cleanup()
+                  resolve(false)
+                }
+                res.once('drain', done)
+                res.once('close', stopped)
+                res.once('error', stopped)
+                if (res.destroyed) stopped()
+              })
+              if (!drained) return
+            }
+          }
+          if (!res.destroyed && !res.writableEnded) res.end()
+          return
+        }
         const { items, total } = requestLog.exportRows(filters)
         const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')
         const body = format === 'csv' ? logsToCsv(items) : logsToJsonl(items)
@@ -1153,7 +1275,14 @@ export function createPanelHandler(ctx) {
       if (req.method === 'GET' && /^\/api\/panel\/request-logs\/[^/]+$/.test(p)) {
         const id = p.split('/').pop()
         const owner_user_id = panelIdentity(req).role === 'user' ? req.panelUserId : null
-        const rec = requestLog.getDebug(id, { owner_user_id })
+        const includeRaw = new URL(req.url, 'http://x').searchParams.get('include_raw') === '1'
+        if (includeRaw && panelIdentity(req).role !== 'admin')
+          return json(res, 403, {
+            ok: false,
+            error: { code: 'raw_admin_required', message: 'Raw diagnostics require admin access' },
+          })
+        const rec = requestLog.getDebug(decodeURIComponent(id), { owner_user_id, includeRaw })
+        if (includeRaw) res.setHeader?.('cache-control', 'no-store')
         if (!rec) return json(res, 404, { ok: false, error: { message: 'debug log not found' } })
         return json(res, 200, { ok: true, item: rec })
       }
@@ -1321,9 +1450,14 @@ export function createPanelHandler(ctx) {
         if (!parsed.ok || !parsed.value) {
           return json(res, 400, {
             ok: false,
-            error: { code: 'invalid_dataplane', message: parsed.error || 'dataplane must be wrap, cc, or crag' },
+            error: {
+              code: 'invalid_dataplane',
+              message: parsed.error || 'dataplane must be wrap, wrap-fixed, cc, cc-fixed, or crag',
+            },
           })
         }
+        const ready = preflightDataplane(cfg.paths.project, parsed.value)
+        if (!ready.ok) return json(res, 503, { ok: false, error: { code: ready.code, message: ready.error } })
         const targets = parseSlotPolicyTargets({
           ids: body.ids,
           all: body.all === true || !Array.isArray(body.ids),
@@ -1356,7 +1490,12 @@ export function createPanelHandler(ctx) {
           project: cfg.paths.project,
           routingConfig: ctx.routingConfig,
           body: {
-            ids: targets.all ? undefined : targets.ids,
+            ids: targets.all
+              ? listVms(cfg.paths.project)
+                  .map(({ id }) => getVm(cfg.paths.project, id))
+                  .filter((vm) => vm && !isCodexVm(vm) && !vm.dataplane)
+                  .map((vm) => vm.id)
+              : targets.ids,
             restart: body.restart !== false,
           },
         })
@@ -2285,7 +2424,7 @@ export function createPanelHandler(ctx) {
         const id = p.split('/')[4]
         const vm = getVm(cfg.paths.project, id)
         if (!vm) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
-        const captured = captureWrapSample(cfg.paths.project, vm)
+        const captured = captureWrapSample(cfg.paths.project, vm, { routing: ctx.routingConfig })
         if (!captured.ok) return json(res, 400, { ok: false, error: { code: captured.code, message: captured.error } })
         return json(res, 200, panel.ok(captured))
       }
@@ -2293,7 +2432,7 @@ export function createPanelHandler(ctx) {
         const id = p.split('/')[4]
         const vm = getVm(cfg.paths.project, id)
         if (!vm) return json(res, 404, { ok: false, error: { message: 'vm not found' } })
-        const wrap = materializeWrapCli(cfg.paths.project, vm)
+        const wrap = materializeSlotDataplane(cfg.paths.project, vm, resolveKernelDataplane(vm, ctx.routingConfig))
         if (!wrap.ok) return json(res, 400, { ok: false, error: { code: wrap.code, message: wrap.error } })
         writeKernelConfig(cfg.paths.project, vm, { routing: ctx.routingConfig })
 
@@ -3282,6 +3421,7 @@ export function createPanelHandler(ctx) {
       if (req.method === 'PUT' && p === '/api/panel/routing') {
         const body = await readBody(req, cfg.limits.max_body_bytes)
         const previousRoutingConfig = structuredClone(ctx.routingConfig)
+        const previousLogging = requestLog?.snapshot?.()
         const personaProblems = [...panel.validatePersonaRoutingPatch(body), ...validateInferenceRoutingPatch(body)]
         if (personaProblems.length) {
           return json(res, 400, {
@@ -3310,17 +3450,29 @@ export function createPanelHandler(ctx) {
         try {
           applied = appliedDuringSwitch ?? persistRoutingPatch(body)
         } catch (error) {
-          restoreRoutingRuntime(previousRoutingConfig)
+          restoreRoutingRuntime(previousRoutingConfig, previousLogging)
           return json(res, 503, {
             ok: false,
             error: { code: 'routing_persist_failed', message: String(error?.message || error) },
           })
         }
+        const dataplaneRuntime = await syncChangedRoutingDataplane(previousRoutingConfig)
+        if (dataplaneRuntime?.ok === false)
+          return json(res, 503, {
+            ok: false,
+            routing_committed: true,
+            dataplane_runtime: dataplaneRuntime,
+            error: {
+              code: 'dataplane_sync_failed',
+              message: 'Routing was saved, but dataplane synchronization failed; inspect the report and retry.',
+            },
+          })
         return json(
           res,
           200,
           panel.ok({
             ...publicRoutingNotify(ctx.routingConfig),
+            ...(dataplaneRuntime ? { dataplane_runtime: dataplaneRuntime } : {}),
             applied_concurrency: applied.concurrency,
             applied_rpm: applied.rpm,
             applied_session_slots: applied.session_slots,

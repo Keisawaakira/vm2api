@@ -1,6 +1,44 @@
 # 部署
 
-推荐 **Docker Compose**，**拉预构建镜像**，不在你的机器上构建。安装目录任意（下文用 `/opt/vm2api`）。
+本 fork 推荐 **Docker Compose 源码构建**。默认源为 `Keisawaakira/vm2api` 的 `main`，安装目录任意（下文用 `/opt/vm2api`）。上游 GHCR 镜像不包含本 fork 的 Chat → Messages 修复。
+
+## Fork / WSL 更新（本次修复）
+
+先把本地改动提交并推送到 `https://github.com/Keisawaakira/vm2api.git` 的 `main`。Windows 工作区的文件不会自动进入 WSL 的安装目录或已运行的容器。在运行 Docker 的 WSL 终端执行：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Keisawaakira/vm2api/main/deploy/install.sh -o /tmp/vm2api-install.sh
+sudo bash /tmp/vm2api-install.sh upgrade --dir /opt/vm2api
+# 全新安装把 upgrade 换成 install
+```
+
+脚本默认源码模式，不依赖 fork 发布 Release/镜像。它拉取 `main` 的实际提交，用两个 compose 文件构建本地 `vm2api-fork:local` 并启动，随后同步槽内 CLI/kernel。已有镜像安装会暂存源码后迁移，保留 `.env`、`data/`、`vms/` 和已有 `src/config`；已有 git 安装会把 origin 对齐 fork。**源码存在未提交修改时会拒绝覆盖**，请先检查并提交或备份处理，勿直接 `git reset --hard`。保留下来的自定义 tracked config 也会触发此保护。
+
+- `--ref 分支名`：拉取指定分支/tag；以后更新同一分支仍需传此参数（也可传环境变量 `VM2API_REF`）。
+- `--version vX.Y.Z`：固定 tag，优先于 `--ref`；旧 tag 不含新修复。
+- `--no-start`：仅更新磁盘源码，不构建/重启；不能视为修复已上线。
+- `--image`：显式选择该仓库的已发布 GHCR 镜像；fork 未发布镜像时不要使用。
+- 构建/探活失败会返回非零，不能把“源码已更新”当成运行容器已更新。
+
+验证磁盘提交与运行容器构建提交：
+
+```bash
+git -C /opt/vm2api rev-parse HEAD
+docker inspect vm2api --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}'
+docker inspect vm2api --format '{{.Config.Image}}'
+# 上面应是相同提交，以及 vm2api-fork:local（或显式配置的 VM2API_BUILD_IMAGE）。
+curl -fsS --noproxy '*' http://127.0.0.1:8787/health
+```
+
+手动重建也必须带覆盖层（只执行 `docker compose up -d --build` 仍可能用上游镜像）：
+
+```bash
+cd /opt/vm2api
+VM2API_SOURCE_REVISION=$(git rev-parse HEAD) \
+  docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```
+
+当前管理台的 Release 检查/更新器仍是上游的按 tag 更新机制，**fork 分支更新请使用以上 WSL 脚本，不要点管理台更新或使用它复制的上游命令**。下文保留的上游镜像及历史版本命令不包含本 fork 未发布的修改。
 
 ## 机器
 
@@ -30,7 +68,7 @@ VM2API_DB_SECRET='再一串'
 
 挂 `docker.sock`，`network_mode: host`。安装目录不再限定 `/opt/vm2api`：控制面自省 `docker inspect vm2api` 的 Mounts，把槽的 `-v` 源换算成宿主路径；也可用 `VM2API_HOST_ROOT` 显式指定。
 
-## 安装
+## 上游镜像安装（不含 fork 修复）
 
 **一键（推荐）：**
 
@@ -73,7 +111,7 @@ cd /opt/vm2api && cp .env.example .env && chmod 600 .env
 docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ```
 
-一键脚本对应 `--from-source`；目录里有 `.git` 时 `upgrade` 自动走源码分支。二进制在仓内 `bin/`，必须 **755**。
+本 fork 一键脚本默认 `--from-source`，目录里有 `.git` 时始终走源码分支；请使用文首 fork 命令而非以上上游示例。二进制在仓内 `bin/`，必须 **755**。
 
 升级到 **v1.2.22** 见下面「已部署机升级到 1.2.22」。更新控制面和槽内 kernel，但不要 `docker rm` 槽。
 
@@ -160,7 +198,7 @@ location / {
 
 ## 一键安装 / 更新
 
-`deploy/install.sh` 对齐 sub2api / CLIProxyAPI：查 GitHub 最新 Release → checkout tag → 重建控制面。不碰已有非空 `.env` 字段、`vms/`、`data/`，不 `docker rm` 槽。构建前若 `.dockerignore` 挡住 `CHANGELOG.md` 会自动补 `!CHANGELOG.md` 并重试一次。
+本 fork 的 `deploy/install.sh` 默认拉取 fork 分支并通过 `docker-compose.build.yml` 重建控制面，详见文首。以下是上游 Release 安装的历史排障记录，不要用其上游更新命令覆盖本 fork。
 
 ### 两类安装错误
 

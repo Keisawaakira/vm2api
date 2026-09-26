@@ -11,7 +11,7 @@ linux amd64 `bin/kin-{kernel,egress,worker,codex-kernel,cookie-auth}`、`share/w
 | `package.json` `"version"` | 人改 | 和 `VERSION` 相同 |
 | `VERSION.txt` artifact | `.github/workflows/version.yml` 在 main 推送后 | 当时 `GITHUB_SHA` 前 7 位，给人对照部署，**不会**写回 git |
 
-发版当天三处一起改：`VERSION`、`package.json`、[CHANGELOG.md](../CHANGELOG.md)，再打 annotated tag。`Dockerfile` 把 `VERSION` 和 `CHANGELOG.md` 拷进控制面镜像，面板才能读当前版本。一键脚本 `deploy/install.sh` 按 GitHub Release tag 升级，不改这三个文件。
+发版当天三处一起改：`VERSION`、`package.json`、[CHANGELOG.md](../CHANGELOG.md)，再打 annotated tag。`Dockerfile` 把 `VERSION` 和 `CHANGELOG.md` 拷进控制面镜像，面板才能读当前版本。本 fork 一键脚本 `deploy/install.sh` 默认跟随 fork 的 `main` 源码构建（也可 `--version` 指定 tag），不改这三个文件；分支构建用 git/镜像 revision 区分，见 [DEPLOY.md](DEPLOY.md)。
 
 ## 打一个 Release
 
@@ -42,7 +42,7 @@ install -m 755 kin-kernel kin-egress kin-worker kin-codex-kernel kin-cookie-auth
 
 然后按 [DEPLOY.md](DEPLOY.md) 指环境变量。槽进程不是 root：权限必须是 `755`，不要 `700`。
 
-控制面镜像：`docker compose build` 拷仓内 `bin/kin-*` 与 `share/wrap-cli`（见 [DEPLOY.md](DEPLOY.md#docker-compose)）。槽位 `kin-os/*` 首次启动编 ubuntu，或 `node docker/kin-os/build.mjs`。
+控制面镜像：`docker compose -f docker-compose.yml -f docker-compose.build.yml build` 拷仓内 `bin/kin-*` 与 `share/wrap-cli`（见 [DEPLOY.md](DEPLOY.md#docker-compose)）。槽位 `kin-os/*` 首次启动编 ubuntu，或 `node docker/kin-os/build.mjs`。
 
 ## 本机构建
 

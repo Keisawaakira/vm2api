@@ -12,7 +12,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { kernelBinPath } from '../transport/rust-kernel-supervisor.mjs'
 import { isCodexVm } from './vm-kind.mjs'
-import { resolveKernelDataplane } from './slot-engine.mjs'
+import { resolveKernelDataplane, normalizeKernelDataplane } from './slot-engine.mjs'
+import { readRoutingConfigFile } from '../core/config.mjs'
+import { readFixedRelease, describeFixedRelease, describeWrapFixed, fixedDataplaneSpec } from './wrap-fixed.mjs'
 
 export const WRAP_CLI_BIN = 'cli-node'
 export const CC_NODE_BIN = 'cc-node'
@@ -397,9 +399,115 @@ export function replaceCragKernelBinary(projectRoot, buf) {
   return { ok: true, written: [dest], size: bytes.length, dataplane: 'crag' }
 }
 
+export function configuredSlotDataplane(projectRoot, vm, routing) {
+  if (routing != null || normalizeKernelDataplane(vm?.dataplane, { inherit: true }) || isCodexVm(vm))
+    return resolveKernelDataplane(vm, routing || {})
+  try {
+    return resolveKernelDataplane(vm, readRoutingConfigFile(projectRoot))
+  } catch (error) {
+    if (error?.cause?.code === 'ENOENT') return resolveKernelDataplane(vm, {})
+    throw error
+  }
+}
+
+export function preflightDataplane(projectRoot, dataplane) {
+  const fixedSpec = fixedDataplaneSpec(dataplane)
+  if (fixedSpec) {
+    const override = String(process.env.KIN_CLAUDE_BIN || '').trim()
+    if (override && override !== `/home/kincli/.kin/${fixedSpec.slotCli}`)
+      return {
+        ok: false,
+        code: `${dataplane.replaceAll('-', '_')}_cli_override`,
+        error: `${dataplane} conflicts with KIN_CLAUDE_BIN; no alternate CLI will be used`,
+      }
+    const checked = readFixedRelease(projectRoot, dataplane)
+    return checked.ok ? { ok: true, dataplane, release_id: checked.id } : checked
+  }
+  if (dataplane === 'crag') {
+    if (!cragKernelPath(projectRoot) || !isFile(path.join(wrapCliTemplateDir(projectRoot), CC_NODE_BIN)))
+      return { ok: false, code: 'crag_files_missing', error: 'Crag kernel or cc-node is missing; no wrap fallback' }
+    return { ok: true, dataplane }
+  }
+  if (dataplane === 'wrap' || dataplane === 'cc') return inspectWrapCliDir(wrapCliTemplateDir(projectRoot))
+  return { ok: false, code: 'invalid_dataplane', error: 'Unsupported production dataplane' }
+}
+
+export function inspectSlotDataplane(projectRoot, vm, dataplane) {
+  const dest = wrapCliHomeDir(projectRoot, vm.id)
+  if (fixedDataplaneSpec(dataplane)) {
+    const bundle = readFixedRelease(projectRoot, dataplane)
+    if (!bundle.ok) return bundle
+    if (
+      !filesEqual(bundle.cli.file, path.join(dest, bundle.slotCli)) ||
+      !filesEqual(bundle.kernel.file, path.join(dest, WRAP_KERNEL_BIN)) ||
+      !isFile(path.join(dest, WRAP_KERNEL_WRAPPER))
+    )
+      return {
+        ok: false,
+        code: `${dataplane.replaceAll('-', '_')}_not_installed`,
+        error: 'The selected fixed kernel/CLI pair is not installed',
+      }
+    return { ok: true, dataplane, dest, wrapper: true, kernel_bin: true }
+  }
+  if (dataplane === 'crag') {
+    const source = cragKernelPath(projectRoot)
+    if (
+      !source ||
+      !filesEqual(source, path.join(dest, WRAP_KERNEL_BIN)) ||
+      !isFile(path.join(dest, CC_NODE_BIN)) ||
+      !isFile(path.join(dest, WRAP_KERNEL_WRAPPER))
+    )
+      return { ok: false, code: 'crag_not_installed', error: 'The selected Crag kernel/CLI pair is not installed' }
+    return { ok: true, dataplane, dest, wrapper: true, kernel_bin: true }
+  }
+  return inspectWrapCliDir(dest)
+}
+
+function installFixedBytes(file, bytes) {
+  try {
+    if (fs.readFileSync(file).equals(bytes)) return
+  } catch {}
+  writeKernelBytes(file, bytes)
+}
+
+export function materializeWrapFixed(projectRoot, vm, opts = {}) {
+  return materializeFixedDataplane(projectRoot, vm, 'wrap-fixed', opts)
+}
+
+export function materializeFixedDataplane(projectRoot, vm, dataplane, { uid = null, gid = null } = {}) {
+  if (!projectRoot || !vm?.id) return { ok: false, code: 'vm_required', error: 'projectRoot and vm id required' }
+  const bundle = readFixedRelease(projectRoot, dataplane)
+  if (!bundle.ok) return bundle
+  const dest = wrapCliHomeDir(projectRoot, vm.id)
+  fs.mkdirSync(dest, { recursive: true })
+  // Write the separate CLI first. Failure cannot replace the ordinary CLI.
+  installFixedBytes(path.join(dest, bundle.slotCli), bundle.cli.bytes)
+  installFixedBytes(path.join(dest, WRAP_KERNEL_BIN), bundle.kernel.bytes)
+  const glibc = path.join(wrapCliTemplateDir(projectRoot), WRAP_GLIBC_DIR)
+  if (isDir(glibc)) copyDir(glibc, path.join(dest, WRAP_GLIBC_DIR))
+  writeWrapper(dest)
+  chownTree(dest, uid, gid)
+  return {
+    ok: true,
+    dataplane,
+    release_id: bundle.id,
+    dest,
+    src: bundle.dir,
+    cli_sha256: bundle.cli.sha256,
+    kernel_sha256: bundle.kernel.sha256,
+    wrapper: true,
+    kernel_bin: true,
+    glibc_shim: isDir(path.join(dest, WRAP_GLIBC_DIR)),
+  }
+}
+
 export function materializeSlotDataplane(projectRoot, vm, dataplane, opts = {}) {
+  if (!projectRoot || !vm?.id) return { ok: false, code: 'vm_required', error: 'projectRoot and vm id required' }
+  dataplane ??= configuredSlotDataplane(projectRoot, vm)
+  if (fixedDataplaneSpec(dataplane)) return materializeFixedDataplane(projectRoot, vm, dataplane, opts)
   if (dataplane === 'crag') return materializeCragKernel(projectRoot, vm, opts)
-  return materializeWrapCli(projectRoot, vm, opts)
+  if (dataplane === 'wrap' || dataplane === 'cc') return materializeWrapCli(projectRoot, vm, opts)
+  return { ok: false, code: 'invalid_dataplane', error: 'Unsupported production dataplane' }
 }
 
 function writeWrapper(destDir) {
@@ -474,10 +582,16 @@ function copyWrapTree(src, dest) {
   writeWrapper(dest)
 }
 
-export function captureWrapSample(projectRoot, vm) {
+export function captureWrapSample(projectRoot, vm, { routing } = {}) {
   if (!projectRoot || !vm?.id) {
     return { ok: false, code: 'vm_required', error: 'projectRoot and vm id required' }
   }
+  if (fixedDataplaneSpec(configuredSlotDataplane(projectRoot, vm, routing)))
+    return {
+      ok: false,
+      code: 'fixed_sample_immutable',
+      error: 'A fixed bundle must not replace the original wrap distribution sample',
+    }
   const src = wrapCliHomeDir(projectRoot, vm.id)
   const status = inspectWrapCliDir(src)
   if (!status.ok) {
@@ -535,6 +649,8 @@ export function describeWrapSample(projectRoot) {
     kernel: describeKernelPayload(projectRoot),
     cli_node: describeCliNodePayload(projectRoot),
     cc_node: describeCcNodePayload(projectRoot),
+    wrap_fixed: describeWrapFixed(projectRoot),
+    cc_fixed: describeFixedRelease(projectRoot, 'cc-fixed'),
   }
 }
 

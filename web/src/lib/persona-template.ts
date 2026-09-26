@@ -121,11 +121,11 @@ export const DEFAULT_PERSONA_TEMPLATES: Record<PersonaPreset, PersonaBlock[]> =
       },
       {
         id: 'caller_agent',
-        note: '仅当调用方自带 agent prompt 时占官方 agent 槽位，空则整块丢弃。2.1.263 起 1h global',
+        note: '仅当调用方自带 agent prompt 时占官方 agent 槽位，空则整块丢弃。TTL 跟随缓存策略',
         drop_if_empty: true,
         type: 'text',
         text: '{{caller_agent}}',
-        cache_control: { type: 'ephemeral', ttl: '1h', scope: 'global' },
+        cache_control: { type: 'ephemeral', scope: 'global' },
       },
       {
         id: 'caller_system',
@@ -150,17 +150,17 @@ export const DEFAULT_PERSONA_TEMPLATES: Record<PersonaPreset, PersonaBlock[]> =
       },
       {
         id: 'agent_official',
-        note: '官方 Claude Code 基础提示词全文。2.1.263 起 1h global 缓存',
+        note: '官方 Claude Code 基础提示词全文。TTL 跟随缓存策略',
         type: 'text',
         text: '{{agent_official}}',
-        cache_control: { type: 'ephemeral', ttl: '1h', scope: 'global' },
+        cache_control: { type: 'ephemeral', scope: 'global' },
       },
       {
         id: 'env_official',
-        note: '官方 continuation + Environment。2.1.263 起 1h 缓存，无 scope',
+        note: '官方 continuation + Environment。TTL 跟随缓存策略，无 scope',
         type: 'text',
         text: '{{env_official}}',
-        cache_control: { type: 'ephemeral', ttl: '1h' },
+        cache_control: { type: 'ephemeral' },
       },
       {
         id: 'caller_system',
@@ -187,11 +187,11 @@ export const DEFAULT_PERSONA_TEMPLATES: Record<PersonaPreset, PersonaBlock[]> =
       },
       {
         id: 'agent_slot',
-        note: '与 official_full 第 3 块同槽：占 1h 缓存断点，不写 agent 全文',
+        note: '与 official_full 第 3 块同槽：保留缓存断点，TTL 跟随缓存策略，不写 agent 全文',
         hide: true,
         type: 'text',
         text: '\u200b',
-        cache_control: { type: 'ephemeral', ttl: '1h' },
+        cache_control: { type: 'ephemeral' },
       },
       {
         id: 'caller_system',
@@ -672,7 +672,7 @@ export function personaExplain(preset: PersonaPreset): string {
     return '官方完整提示词：固定写入 billing + identity + 官方 Claude Code agent 提示词全文（第 3 段，5m 缓存），调用方 --append-system-prompt 的剩余 system 原文追加为第 4 段。官方 Claude Code 入站整包透传，不重复注入。'
   }
   if (preset === 'zero') {
-    return '0注入：与官方完整提示词同一套 3 槽。第 1 块 billing 把短身份折进 prompt_version，第 2/3 块用零宽字符占 identity 和 agent 槽（第 3 块 5m 缓存）。不写 agent 全文、不写 Environment。调用方 system 原样追加。overlay 强制关闭。系统遮罩默认开。官方 Claude Code 入站整包跳过。'
+    return '0注入：与官方完整提示词同一套 3 槽。第 1 块 billing 把短身份折进 prompt_version，第 2/3 块用零宽字符占 identity 和 agent 槽（第 3 块保留缓存断点，TTL 跟随缓存策略，0注入不等于关闭缓存）。不写 agent 全文、不写 Environment。调用方 system 原样追加。overlay 强制关闭。系统遮罩默认开。官方 Claude Code 入站整包跳过。'
   }
   if (preset === 'custom') {
     return '自定义：完全按下面的 JSONL 模板逐块组装出站 system。留空则回落官方提示词模板。usage 遮罩由每块的 hide 字段决定。官方 Claude Code 入站仍整包跳过。'

@@ -1,3 +1,4 @@
+import { normalizeChatControls } from './chat-thinking.mjs'
 /**
  * Single outbound assembly used by /v1 applyAttempt and probe-class helpers.
  * Tests compare envelopes from this module so admin paths cannot drift.
@@ -40,11 +41,13 @@ import {
   applyCacheTtlToBody,
   enforceCacheTtlOrder,
   removeCacheControlFields,
+  cacheTtlFromRouting,
   stripIllegalCacheControlFields,
 } from './cache-ttl.mjs'
 import { apiKeyBetaHeader, setupTokenBetaHeader } from './claude-code-betas.mjs'
 import { applyOpus55RequestRules } from './model-policy.mjs'
 import { isApiKeyMode, isSetupTokenMode } from '../oauth/credential-mode.mjs'
+import { usesShortClaudeCache } from './cache-request.mjs'
 
 export const INFERENCE_UA = 'kin-inference/1.0'
 
@@ -163,7 +166,15 @@ function stabilizeMessageBudgets(body) {
  * This must not depend on client classification: relays strip the billing
  * block and rewrite the UA, so relayed Claude Code looks third-party.
  */
-export function prepareCliHopBody(canonicalBody, { stream = true, repaired = false } = {}) {
+export function prepareCliHopBody(canonicalBody, { stream = true, repaired = false, chatPreserve = false } = {}) {
+  if (chatPreserve) {
+    let body = { ...canonicalBody, stream: !!stream }
+    delete body.metadata
+    // Native CLI owns cache marker placement and Haiku thinking compatibility only.
+    body = pinHaikuCliThinking(body)
+    body = normalizeChatControls(body)
+    return removeCacheControlFields(body)
+  }
   let body = officialMessagesBody(canonicalBody, { stream })
   delete body.metadata
   // Wrap CLI (Claude Code) throws a fatal "max_output_tokens" error if response reaches max_tokens.
@@ -191,6 +202,7 @@ export function prepareCliHopBody(canonicalBody, { stream = true, repaired = fal
   body = applyOpus55RequestRules(body)
   body = alignSamplingWithThinking(body)
   body = stripIllegalCacheControlFields(body)
+  // Native CLI owns final placement/TTL; HTTP policy below must not pre-stamp this hop.
   body = removeCacheControlFields(body)
   return body
 }
@@ -203,6 +215,7 @@ export function pinHaikuCliThinking(body = {}) {
 
 export function prepareOutboundAttempt({
   canonicalBody,
+  chatPreserve = false,
   inbound = {},
   identity,
   unofficial,
@@ -244,6 +257,17 @@ export function prepareOutboundAttempt({
       extractCallerSession({ inbound, body: canonicalBody, headers: reqHeaders }),
       sessionContext,
     )
+  if (chatPreserve) {
+    const body = normalizeChatControls({ ...canonicalBody, stream: !!stream })
+    const identified = identity
+      ? applyCrsIdentityReplace(body, identity, inbound, reqHeaders, {
+          officialClient: keepCallerSession,
+          sessionId,
+          ...sessionContext,
+        })
+      : body
+    return { body: removeCacheControlFields(identified), toolNames: {} }
+  }
   let identified = applyCrsIdentityReplace(
     officialMessagesBody(canonicalBody, { stream }),
     identity,
@@ -261,15 +285,20 @@ export function prepareOutboundAttempt({
   }
   // Official Claude Code places its own breakpoints; adding ours would shift the
   // prefix it already caches.
+  const defaultTtl = cacheTtl ?? cacheTtlFromRouting({}, { credentialMode })
   let cleaned = prepareAnthropicRequest(identified, {
     cacheControlLimit,
     unofficial: !!unofficial && !inferenceOnly,
     cacheBreakpoints: keepCallerSession ? null : cacheBreakpoints,
-    cacheTtl: cacheTtl || undefined,
+    cacheTtl: defaultTtl,
     inbound,
   })
   cleaned = stripIllegalCacheControlFields(cleaned)
-  if (cacheTtl) cleaned = applyCacheTtlToBody(cleaned, cacheTtl)
+  if (!keepCallerSession && cacheBreakpoints?.enabled !== false) {
+    cleaned = applyCacheTtlToBody(cleaned, defaultTtl)
+  }
+  if (usesShortClaudeCache({ headers: reqHeaders, body: inbound }))
+    cleaned = applyCacheTtlToBody(cleaned, '5m', { short: true })
   cleaned = enforceCacheTtlOrder(cleaned)
   const tools = rewriteToolNames(cleaned, { enabled: toolNameRewrite !== false })
   return { body: tools.body, toolNames: tools.reverse }
@@ -289,6 +318,7 @@ export function prepareOutboundHeaders(reqHeaders, homeDir, identity, model, { c
 /** Body + headers after the context_management ↔ context-management beta gate. */
 export function prepareOutboundEnvelope({
   canonicalBody,
+  chatPreserve = false,
   inbound = {},
   identity,
   unofficial,
@@ -315,6 +345,7 @@ export function prepareOutboundEnvelope({
 } = {}) {
   const prepared = prepareOutboundAttempt({
     canonicalBody,
+    chatPreserve,
     inbound,
     identity,
     unofficial,
@@ -359,6 +390,8 @@ export function prepareOutboundEnvelope({
     const beta = ensureFastModeBeta(headers['anthropic-beta'] || '', prepared.body)
     if (beta) headers['anthropic-beta'] = beta
   }
-  const body = sealClaudeCodeCch(sanitizeAnthropicBodyForBetaTokens(prepared.body, headers?.['anthropic-beta'] || ''))
+  const body = chatPreserve
+    ? prepared.body
+    : sealClaudeCodeCch(sanitizeAnthropicBodyForBetaTokens(prepared.body, headers?.['anthropic-beta'] || ''))
   return { body, headers, toolNames: prepared.toolNames }
 }

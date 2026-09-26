@@ -2,12 +2,12 @@
 #
 # vm2api 一键安装 / 更新
 # 参考 sub2api deploy/install.sh 与 CLIProxyAPI installer：
-#   查 GitHub Release → 停服务 → 换版本 → 保留配置 → 拉起。
+#   拉取 fork 分支/指定 tag → 本机构建 → 保留配置 → 替换控制面。
 #
 # 安装:
-#   curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/Keisawaakira/vm2api/main/deploy/install.sh | sudo bash
 # 更新:
-#   curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash -s -- upgrade
+#   curl -fsSL https://raw.githubusercontent.com/Keisawaakira/vm2api/main/deploy/install.sh | sudo bash -s -- upgrade
 # 检查:
 #   sudo bash /opt/vm2api/deploy/install.sh check
 #
@@ -25,7 +25,8 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-GITHUB_REPO="${VM2API_GITHUB_REPO:-dofastted/vm2api}"
+GITHUB_REPO="${VM2API_GITHUB_REPO:-Keisawaakira/vm2api}"
+SOURCE_REF="${VM2API_REF:-main}"
 INSTALL_DIR="${VM2API_DIR:-/opt/vm2api}"
 SERVICE_NAME="vm2api"
 DEFAULT_PORT="${PORT:-8787}"
@@ -33,7 +34,7 @@ TARGET_VERSION=""
 ASSUME_YES=0
 NO_START=0
 SYNC_WRAP=1
-FROM_SOURCE=0
+FROM_SOURCE=1
 DEFAULT_ADMIN_USER="admin"
 DEFAULT_ADMIN_PASSWORD="123456"
 WROTE_DEFAULT_PASSWORD=0
@@ -60,21 +61,34 @@ usage() {
 
 命令:
   install              安装到 ${INSTALL_DIR}（默认）
-  upgrade | update     升到最新 GitHub Release（保留 .env / vms / data）
-  check                对比当前版本与最新 Release，打印 changelog
+  upgrade | update     更新 fork 分支源码并构建（保留 .env / vms / data）
+  check                显示本地提交与远端分支/tag
   changelog            打印本地 CHANGELOG.md
   status               当前版本、容器、探活
   uninstall            停控制面（默认保留 .env / vms / data）
 
 选项:
-  --version vX.Y.Z     指定 tag
+  --version vX.Y.Z     指定 tag（优先于 --ref）
+  --ref BRANCH         源码分支/tag（默认 ${SOURCE_REF}）
   --dir PATH           安装目录（默认 ${INSTALL_DIR}）
   --yes                非交互
   --no-start           只拉代码，不 compose up
   --no-sync-wrap       升级后不自动替换并重启槽内 CLI / kernel
-  --from-source        clone 仓库并在本机构建镜像（默认拉预构建镜像）
+  --from-source        clone 仓库并在本机构建镜像（默认）
+  --image              使用该仓库发布的 GHCR 镜像/Release（已有源码仍构建）
+                       fork 没有发布镜像时不要使用 --image
   -h, --help           帮助
 EOF
+}
+
+target_ref() {
+  if [ -n "$TARGET_VERSION" ]; then
+    echo "$TARGET_VERSION"
+  elif [ "$FROM_SOURCE" = 1 ] || [ -d "${INSTALL_DIR}/.git" ]; then
+    echo "$SOURCE_REF"
+  else
+    latest_release_tag
+  fi
 }
 
 normalize_tag() {
@@ -254,7 +268,7 @@ guide_changelog_error() {
   echo "  原因: .dockerignore 的 *.md 把 CHANGELOG.md 挡在构建上下文外（v1.2.7）。"
   echo "  在 ${INSTALL_DIR} 执行:"
   echo "    grep -q '!CHANGELOG.md' .dockerignore || echo '!CHANGELOG.md' >> .dockerignore"
-  echo "    docker compose up -d --build"
+  echo "    docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build"
   echo "  或一键升到已修复版本:"
   echo "    curl -sSL https://raw.githubusercontent.com/${GITHUB_REPO}/main/deploy/install.sh | sudo bash -s -- upgrade"
   echo ""
@@ -426,47 +440,59 @@ fetch_release_files() {
 }
 
 checkout_tag() {
-  local tag="$1"
+  local ref="$1" repo="https://github.com/${GITHUB_REPO}.git"
   cd "${INSTALL_DIR}"
   if [ ! -d .git ]; then
-    err "${INSTALL_DIR} 不是 git 仓库。请重新安装，或手动 git clone。"
+    err "${INSTALL_DIR} 不是 git 仓库"
     exit 1
   fi
-  ensure_git_safe
-  info "fetch tags"
-  git fetch --tags origin
-  if ! git rev-parse -q --verify "refs/tags/${tag}" >/dev/null && \
-     ! git rev-parse -q --verify "origin/${tag}" >/dev/null && \
-     ! git cat-file -t "${tag}" >/dev/null 2>&1; then
-    # fetch may have created the tag
-    if ! git ls-remote --tags origin "refs/tags/${tag}" | grep -q .; then
-      err "找不到 tag ${tag}"
-      exit 1
-    fi
+  if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+    err "源码目录有未提交修改；请先提交或备份处理，再升级（不会强制覆盖）"
+    exit 1
   fi
-  info "checkout ${tag}（不碰 .env / vms / data）"
-  git checkout -f "${tag}"
+  info "fetch ${repo} ${ref}"
+  git fetch --depth 1 "$repo" "$ref"
+  git reset --hard FETCH_HEAD
+  git remote set-url origin "$repo"
+  info "源码提交 $(git rev-parse HEAD)"
   chmod 755 bin/kin-* 2>/dev/null || true
 }
 
 fresh_clone() {
-  local tag="$1"
+  local ref="$1" stage
   if [ -d "${INSTALL_DIR}/.git" ]; then
-    info "已有仓库，改为升级路径"
-    checkout_tag "$tag"
+    ensure_git_safe
+    checkout_tag "$ref"
     return
   fi
-  if [ -e "${INSTALL_DIR}" ] && [ -n "$(ls -A "${INSTALL_DIR}" 2>/dev/null || true)" ]; then
-    err "${INSTALL_DIR} 已存在且不是 git 仓库"
+  if [ -e "${INSTALL_DIR}" ] && [ -n "$(ls -A "${INSTALL_DIR}" 2>/dev/null || true)" ] && \
+     [ ! -f "${INSTALL_DIR}/docker-compose.yml" ]; then
+    err "${INSTALL_DIR} 非空且不是 vm2api 安装目录；拒绝覆盖"
     exit 1
   fi
-  info "clone ${GITHUB_REPO} → ${INSTALL_DIR}"
-  git clone --branch "$tag" --depth 1 "https://github.com/${GITHUB_REPO}.git" "${INSTALL_DIR}" \
-    || git clone "https://github.com/${GITHUB_REPO}.git" "${INSTALL_DIR}"
-  cd "${INSTALL_DIR}"
+  mkdir -p "$(dirname "$INSTALL_DIR")"
+  stage="$(mktemp -d "${INSTALL_DIR}.source.XXXXXX")"
+  info "clone ${GITHUB_REPO}@${ref} → ${stage}"
+  if ! git clone --branch "$ref" --depth 1 "https://github.com/${GITHUB_REPO}.git" "$stage"; then
+    rm -rf "$stage"
+    err "拉取失败，原安装未改动"
+    exit 1
+  fi
+  if [ -e "$stage/.env" ] || [ -e "$stage/vms" ] || [ -e "$stage/data" ]; then
+    err "源码包含运行时数据目录；拒绝迁移。暂存目录: $stage"
+    exit 1
+  fi
+  mkdir -p "$INSTALL_DIR"
+  if [ -d "$INSTALL_DIR/src/config" ]; then
+    mkdir -p "$stage/src/config"
+    cp -a "$INSTALL_DIR/src/config/." "$stage/src/config/"
+  fi
+  # Stage excludes runtime .env/vms/data; existing config wins during image migration.
+  cp -a "$stage/." "$INSTALL_DIR/"
+  rm -rf "$stage"
+  cd "$INSTALL_DIR"
   ensure_git_safe
-  git fetch --tags origin
-  git checkout -f "$tag"
+  info "源码提交 $(git rev-parse HEAD)"
   chmod 755 bin/kin-* 2>/dev/null || true
 }
 
@@ -486,28 +512,30 @@ start_stack() {
       exit 1
     fi
     if KIN_AUTO_SYNC_WRAP="$auto_sync_wrap" compose up -d; then
-      wait_health || true
+      wait_health || { err "控制面探活失败"; exit 1; }
       return
     fi
     err "docker compose 失败。日志: docker logs ${SERVICE_NAME}"
     exit 1
   fi
   ensure_build_context
-  info "docker compose up -d --build（源码模式；只重建控制面，不 docker rm 槽）"
+  export VM2API_SOURCE_REVISION
+  VM2API_SOURCE_REVISION="$(git rev-parse HEAD)"
+  info "docker compose up -d --build（源码 ${VM2API_SOURCE_REVISION}；只重建控制面，不 docker rm 槽）"
   log="$(mktemp)"
-  if KIN_AUTO_SYNC_WRAP="$auto_sync_wrap" compose up -d --build >"$log" 2>&1; then
+  if KIN_AUTO_SYNC_WRAP="$auto_sync_wrap" compose -f docker-compose.yml -f docker-compose.build.yml up -d --build >"$log" 2>&1; then
     cat "$log"
     rm -f "$log"
-    wait_health || true
+    wait_health || { err "控制面探活失败"; exit 1; }
     return
   fi
   cat "$log"
   if grep -qE 'CHANGELOG\.md|"/CHANGELOG\.md": not found' "$log"; then
     warn "compose 因 CHANGELOG.md 失败，补 .dockerignore 后重试一次"
     ensure_build_context
-    if KIN_AUTO_SYNC_WRAP="$auto_sync_wrap" compose up -d --build; then
+    if KIN_AUTO_SYNC_WRAP="$auto_sync_wrap" compose -f docker-compose.yml -f docker-compose.build.yml up -d --build; then
       rm -f "$log"
-      wait_health || true
+      wait_health || { err "控制面探活失败"; exit 1; }
       return
     fi
     guide_changelog_error
@@ -532,9 +560,8 @@ cmd_install() {
   require_cmds
   print_banner
   local tag
-  tag="${TARGET_VERSION:-$(latest_release_tag)}"
-  tag="$(normalize_tag "$tag")"
-  info "目标版本 ${tag}"
+  tag="$(target_ref)"
+  info "目标 ${GITHUB_REPO}@${tag}"
   if [ "$FROM_SOURCE" = 1 ] || [ -d "${INSTALL_DIR}/.git" ]; then
     fresh_clone "$tag"
     ensure_git_safe
@@ -543,6 +570,7 @@ cmd_install() {
     fetch_release_files "$tag"
     ensure_env
     env_set VM2API_IMAGE_TAG "$tag"
+    env_set VM2API_IMAGE "${VM2API_IMAGE:-ghcr.io/${GITHUB_REPO,,}}"
   fi
   start_stack
   ok "安装完成  ${INSTALL_DIR}  @ $(local_version)"
@@ -564,26 +592,30 @@ cmd_upgrade() {
   fi
   local current tag
   current="$(local_version)"
-  tag="${TARGET_VERSION:-$(latest_release_tag)}"
-  tag="$(normalize_tag "$tag")"
-  info "当前 ${current}  →  目标 ${tag}"
+  tag="$(target_ref)"
+  info "当前 ${current}  →  目标 ${GITHUB_REPO}@${tag}"
   if [ "v${current}" = "$tag" ]; then
     ok "已经是 ${tag}，仍会对齐镜像与部署文件"
   fi
-  if [ "$(install_mode)" = source ]; then
-    checkout_tag "$tag"
+  if [ "$FROM_SOURCE" = 1 ] || [ "$(install_mode)" = source ]; then
+    fresh_clone "$tag"
     ensure_git_safe
     ensure_env
   else
     fetch_release_files "$tag"
     ensure_env
     env_set VM2API_IMAGE_TAG "$tag"
+    env_set VM2API_IMAGE "${VM2API_IMAGE:-ghcr.io/${GITHUB_REPO,,}}"
   fi
   echo ""
   info "本版 changelog"
-  print_changelog_slice "${INSTALL_DIR}/CHANGELOG.md" "$current" "$(version_of_tag "$tag")" || true
-  local notes
-  notes="$(release_notes "$tag" || true)"
+  local notes=""
+  if [[ "$tag" == v[0-9]* ]]; then
+    print_changelog_slice "${INSTALL_DIR}/CHANGELOG.md" "$current" "$(version_of_tag "$tag")" || true
+    notes="$(release_notes "$tag" || true)"
+  else
+    info "分支构建 ${tag}；版本号可能不变，以源码提交/镜像 revision 为准"
+  fi
   if [ -n "$notes" ]; then
     echo "$notes"
     echo ""
@@ -604,7 +636,14 @@ cmd_upgrade() {
 cmd_check() {
   local current tag
   current="$(local_version)"
-  tag="$(latest_release_tag)"
+  tag="$(target_ref)"
+  if [ "$FROM_SOURCE" = 1 ] || [ "$(install_mode)" = source ]; then
+    echo "当前版本: ${current}"
+    if [ -d "${INSTALL_DIR}/.git" ]; then git -C "$INSTALL_DIR" rev-parse HEAD; fi
+    echo "远端: ${GITHUB_REPO}@${tag}"
+    git ls-remote "https://github.com/${GITHUB_REPO}.git" "$tag"
+    return
+  fi
   echo "当前: ${current}"
   echo "最新: ${tag}"
   if [ "v${current}" = "$tag" ]; then
@@ -687,6 +726,15 @@ while [ $# -gt 0 ]; do
     --version)
       TARGET_VERSION="$(normalize_tag "$2")"
       shift 2
+      ;;
+    --ref)
+      SOURCE_REF="$2"
+      FROM_SOURCE=1
+      shift 2
+      ;;
+    --image)
+      FROM_SOURCE=0
+      shift
       ;;
     --dir)
       INSTALL_DIR="$2"

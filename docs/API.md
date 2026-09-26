@@ -105,9 +105,14 @@ curl -sS http://127.0.0.1:8787/v1/chat/completions \
 | `tools[].function` | Anthropic `tools[]` |
 | `tool_choice=required` | `{type:any}` |
 | `tool_choice.function` | `{type:tool,name}` |
-| `reasoning_effort` / `reasoning.effort` | `thinking.enabled + budget` |
+| `reasoning_effort` / `reasoning.effort` | 4.6+/5：`thinking.adaptive` + `output_config.effort`（`max` 保持 `max`，`display: summarized`）；Haiku / 4.5：`thinking.enabled + budget` |
 | `response_format` | `output_config` |
-| 图片 `image_url` | Anthropic image 块 |
+| 图片 `image_url` / `file.file_data` data URL | Anthropic image / document 块（含工具结果） |
+| `parallel_tool_calls=false` | `tool_choice.disable_parallel_tool_use=true` |
+| `tool_choice.type=allowed_tools` | 筛选工具并映射 auto/required |
+| `tools[].function.strict` / `parametersJsonSchema` | 保留 strict / 归一化 input_schema |
+
+Chat 默认 `max_tokens=32000`（与 CLIProxy 相同），显式 `max_tokens` 优先于 `max_completion_tokens`；`temperature` 不转发。`reasoning.exclude=true` 或 `include_reasoning=false` 隐藏思考摘要但保留 effort。完整移植范围及 VM 身份/structured output 适配差异见 [PROTOCOL.md](PROTOCOL.md)。
 
 回包：
 

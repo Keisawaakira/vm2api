@@ -15,11 +15,13 @@ import {
 } from './rust-kernel-client.mjs'
 import { OFFICIAL_CLI_VERSION } from '../identity/vm-identity.mjs'
 import { cacheTtlFromRouting, normalizeCacheTtl } from '../protocol/cache-ttl.mjs'
+import { credentialModeFromOauth } from '../oauth/credential-mode.mjs'
 import { setVmSchedulable, listVms, getVm } from '../vm/vm-registry.mjs'
 import { isCodexVm } from '../vm/vm-kind.mjs'
 import {
-  CONTAINER_CC_NODE_BIN,
   CONTAINER_CLI_NODE_BIN,
+  containerCliBinForDataplane,
+  nativeKernelFamily,
   KERNEL_NATIVE_SLOT_COUNT,
   resolveCliSystemLayout,
   resolveKernelDataplane,
@@ -576,9 +578,18 @@ export function writeKernelConfig(
   const testEndpoints = process.env.KIN_KERNEL_TEST_ENDPOINTS === '1'
   const dataplane = resolveKernelDataplane(vm, routing || {}) || 'wrap'
   const envBin = String(process.env.KIN_CLAUDE_BIN || '').trim()
-  const claudeBin = envBin || (dataplane === 'wrap' ? CONTAINER_CLI_NODE_BIN : CONTAINER_CC_NODE_BIN)
+  const selectedBin = containerCliBinForDataplane(dataplane)
+  if ((dataplane === 'wrap-fixed' || dataplane === 'cc-fixed') && envBin && envBin !== selectedBin)
+    throw new Error(`${dataplane} does not allow a different KIN_CLAUDE_BIN override`)
+  const claudeBin = envBin || selectedBin
   const tz = String(timezone || vm.timezone || previous.timezone || '').trim()
-  const defaultCacheTtl = routing != null ? cacheTtlFromRouting(routing) : normalizeCacheTtl(previous.default_cache_ttl)
+  const cacheOptions = { credentialMode: credentialModeFromOauth(vm.claude || {}) }
+  const defaultCacheTtl =
+    routing != null
+      ? cacheTtlFromRouting(routing, cacheOptions)
+      : previous.default_cache_ttl
+        ? normalizeCacheTtl(previous.default_cache_ttl)
+        : cacheTtlFromRouting({}, cacheOptions)
 
   const config = {
     vm_id: vm.id,
@@ -598,7 +609,8 @@ export function writeKernelConfig(
     runtime_kind: 'docker',
     test_endpoints: testEndpoints,
     provider: 'local_cli',
-    dataplane,
+    // The promoted variant uses the existing native wrap ABI, not a new Rust enum.
+    dataplane: nativeKernelFamily(dataplane),
     claude_bin: claudeBin,
     slots_per_worker: wrapSlotCount(vm, routing || {}),
     persona_preset: resolveSlotPersonaPreset(vm, routing || {}),

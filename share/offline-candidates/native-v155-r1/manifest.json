@@ -1,0 +1,188 @@
+{
+  "version": 1,
+  "id": "native-v155-r1",
+  "status": "offline_only_pending_runtime",
+  "production_approved": false,
+  "purpose": "isolated fake-Anthropic capture only",
+  "supported_layouts": [
+    "zero",
+    "identity"
+  ],
+  "kernel_sha256": {
+    "wrap": "c44eae87aec7c537196513cc78d6e7e7c0c14b20bdc6c15eb7c0a5a68e1658a0",
+    "cc": "c44eae87aec7c537196513cc78d6e7e7c0c14b20bdc6c15eb7c0a5a68e1658a0",
+    "crag": "5764a186e3778278a8733ecaf924211070968def7c6648c6f6ecf3b76120a537"
+  },
+  "local_validation": {
+    "completed": true,
+    "behavior_tests": 23,
+    "test_sha256": "bf96a9bf699e26c6cddfb4a0ab42e7aac1488928cdd766e900cba6d57cf00478",
+    "native_execution": false,
+    "user_capture_accepted": false,
+    "scope": "isolated extracted code with stubbed dependencies; no Linux native execution"
+  },
+  "bun_runtime": "1.3.14+0d9b296a",
+  "method": "fixed-length embedded-JS spans; existing runtime/resources unchanged",
+  "tools": {
+    "upx": "upx 5.0.1",
+    "syntax_minifier": "1.4.2"
+  },
+  "execution_guard": {
+    "env": "VM2API_OFFLINE_CANDIDATE",
+    "value": "native-v155-r1",
+    "base_url": "literal http://127.0.0.1:port only"
+  },
+  "limitations": [
+    "Linux native execution awaits user capture acceptance",
+    "Crag kernel request shaping is unchanged",
+    "Generated native prompts remain separate from preserved caller blocks",
+    "Only the final non-global system cache marker is extended; real cache efficiency is unverified"
+  ],
+  "artifacts": {
+    "cli-node": {
+      "file": "cli-node",
+      "source_packed_sha256": "3202378ad990d0ba098d813e7a2a4b488ba9d0930fa96b5ddbbd16cc144d709a",
+      "source_unpacked_sha256": "283e0555228f6ffcbc95eea66438bbc85c631e74676650e5e7c23cbdd36487b8",
+      "sha256": "47c6687f47cbf808bb25743b4b309175d98845e3cfd76add08fa8671d9ba38d5",
+      "bytes": 28576272,
+      "unpacked_sha256": "52dfe8b4e06abf9aa1abbe9297168e7bd36c88a14f4711e887d3610ee844a3ad",
+      "unpacked_bytes": 123275392,
+      "validations": {
+        "elf_graph": true,
+        "no_bytecode": true,
+        "unchanged_outside_js_spans": true,
+        "syntax": {
+          "syntax": true,
+          "imports": 1183,
+          "exports": 0
+        },
+        "upx_integrity": true,
+        "exact_unpack_roundtrip": true
+      },
+      "graph": {
+        "section": {
+          "nameOffset": 255,
+          "offset": 93581312,
+          "length": 29650895
+        },
+        "payloadLength": 29650887,
+        "flags": 7,
+        "entry": 0,
+        "modules": [
+          {
+            "name": "/$bunfs/root/cli.js",
+            "sourceOffset": 93581340,
+            "sourceBytes": 29650765,
+            "sourcemapBytes": 0,
+            "bytecodeBytes": 0,
+            "moduleInfoBytes": 0,
+            "originBytes": 0,
+            "encoding": 1,
+            "loader": 1,
+            "format": 1,
+            "side": 0
+          }
+        ]
+      },
+      "patches": [
+        {
+          "id": "snapshot-caller-system",
+          "offset": 120021807,
+          "bytes": 1274,
+          "replacement_bytes": 999,
+          "before_sha256": "ce0ddb2f29b0b2850a95202571ffd74125fc2722c28a5973b8c53b482018c05f",
+          "after_sha256": "55a762b86b5d62c52150ef1cecdd84f2d349360f0bb33fee7b651a7d98ce6054"
+        },
+        {
+          "id": "preserve-caller-api-blocks",
+          "offset": 120034750,
+          "bytes": 1880,
+          "replacement_bytes": 1870,
+          "before_sha256": "be12ef31db7f2bfa3d840233df544bc6594d18472bf768cea27a6e5defc253af",
+          "after_sha256": "ffa2f6b763dd3a6e8117f8f426b0d5ad058ca912c99e60c28e7eb19f925229b8"
+        },
+        {
+          "id": "offline-entry-guard",
+          "offset": 123221665,
+          "bytes": 10424,
+          "replacement_bytes": 9062,
+          "before_sha256": "24c3e90be9651cce4d5837d40879af6c03dc5c2d03b6367afac4c54a03cf2e14",
+          "after_sha256": "48ab09512f7b2d8d2a47538cce988245169c16477cfdf3f52e8a1e8dd9bddc47"
+        }
+      ]
+    },
+    "cc-node": {
+      "file": "cc-node",
+      "source_packed_sha256": "be5eec49a78345dd935e302e88c9d7ad0afbb09a195356d81be1bdea766f3960",
+      "source_unpacked_sha256": "393230977c79d4cb89f0251ddcf5fd1151c30a73536f7feac984900605e5e832",
+      "sha256": "c18cd72c26da381d925d0480113664c06f8e4c30b6559238f077fce99389be45",
+      "bytes": 27157512,
+      "unpacked_sha256": "d704c0d405aaa54e81ffceca51328afb1940827fe581824b226103fe5279d45b",
+      "unpacked_bytes": 111048832,
+      "validations": {
+        "elf_graph": true,
+        "no_bytecode": true,
+        "unchanged_outside_js_spans": true,
+        "syntax": {
+          "syntax": true,
+          "imports": 749,
+          "exports": 0
+        },
+        "upx_integrity": true,
+        "exact_unpack_roundtrip": true
+      },
+      "graph": {
+        "section": {
+          "nameOffset": 255,
+          "offset": 93581312,
+          "length": 17422442
+        },
+        "payloadLength": 17422434,
+        "flags": 7,
+        "entry": 0,
+        "modules": [
+          {
+            "name": "/$bunfs/root/cli.js",
+            "sourceOffset": 93581340,
+            "sourceBytes": 17422312,
+            "sourcemapBytes": 0,
+            "bytecodeBytes": 0,
+            "moduleInfoBytes": 0,
+            "originBytes": 0,
+            "encoding": 1,
+            "loader": 1,
+            "format": 1,
+            "side": 0
+          }
+        ]
+      },
+      "patches": [
+        {
+          "id": "snapshot-caller-system",
+          "offset": 108508497,
+          "bytes": 1274,
+          "replacement_bytes": 999,
+          "before_sha256": "ce0ddb2f29b0b2850a95202571ffd74125fc2722c28a5973b8c53b482018c05f",
+          "after_sha256": "55a762b86b5d62c52150ef1cecdd84f2d349360f0bb33fee7b651a7d98ce6054"
+        },
+        {
+          "id": "preserve-caller-api-blocks",
+          "offset": 108520509,
+          "bytes": 2072,
+          "replacement_bytes": 2023,
+          "before_sha256": "b378a62d9584f035ce0d446736fe23fe63949bfd5beed6be02cd899e8cd91007",
+          "after_sha256": "94e6a344ec20c2b8139183e18fa6ed486908f3b2eb51829bd7abc989f908b945"
+        },
+        {
+          "id": "offline-guard-and-cc-initialization",
+          "offset": 111000022,
+          "bytes": 3620,
+          "replacement_bytes": 3282,
+          "before_sha256": "9c1d01a6251d9460926719a6d7035e9c2805a475e2ccb4211ea6915b183512bd",
+          "after_sha256": "cfe6b37cb463616784c6b2aec90a11d6cd450e36dcdeda4f34bd4a214b72239f"
+        }
+      ]
+    }
+  },
+  "patches_sha256": "696f30eb32188af6786cb13d2b2494269c101489393e53a756a31ea4c35f3812"
+}
