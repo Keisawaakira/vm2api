@@ -3434,6 +3434,7 @@ export function createPanelHandler(ctx) {
         })
         try {
           const result = await sendNotifyTest(trial, channel, {
+            baseUrl: cfg.base_url,
             snapshot:
               ctx.notifyMonitor?.getSnapshot?.() ||
               (await panel.snapshotAccountPool({
