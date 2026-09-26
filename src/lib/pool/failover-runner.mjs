@@ -409,6 +409,8 @@ export class FailoverRunner {
     pinVmId = null,
     familyKey = null,
     familyVmId = null,
+    deviceKey = null,
+    skipSessionSeat = false,
     ownerScope = null,
     countUsage = true,
   } = {}) {
@@ -428,24 +430,35 @@ export class FailoverRunner {
     const bindKeys = uniqueStickyKeys(stickyKey, stickyKeys)
     let outboundSessionId = ''
     let outboundSessionAccountId = ''
+    let currentDeviceVmId = null
     const bindAll = (account, opts) => {
-      if (!this.stickyRouter?.bind || !account) return
+      if (!this.stickyRouter || !account) return
       const sessionId = account.sessionId || (account.accountId === outboundSessionAccountId ? outboundSessionId : '')
       const payload = { accountId: account.accountId, vmId: account.vmId }
       const slotIndex = account.slotIndex != null ? account.slotIndex : pinnedSlot
       if (slotIndex != null) payload.slotIndex = slotIndex
       if (sessionId) payload.sessionId = sessionId
       if (stickyDeviceId) payload.deviceId = stickyDeviceId
-      for (const key of bindKeys) {
-        const prev = this.stickyRouter.resolve?.(key)
-        // A live pin on another account means this request only spilled for
-        // capacity. Rewriting it would move the whole session off its slot.
-        if (prev?.accountId && prev.accountId !== account.accountId) continue
-        const guard = prev ? { ...opts, ifGeneration: prev.generation || 0 } : opts
-        this.stickyRouter.bind(key, payload, guard)
+      if (this.stickyRouter.bind) {
+        for (const key of bindKeys) {
+          const prev = this.stickyRouter.resolve?.(key)
+          // A live pin on another account means this request only spilled for
+          // capacity. Rewriting it would move the whole session off its slot.
+          if (prev?.accountId && prev.accountId !== account.accountId) continue
+          const guard = prev ? { ...opts, ifGeneration: prev.generation || 0 } : opts
+          this.stickyRouter.bind(key, payload, guard)
+        }
       }
       if (familyKey && account.vmId) {
-        this.stickyRouter.bind(familyKey, { accountId: account.accountId, vmId: account.vmId }, { countHit: false })
+        this.stickyRouter.bind?.(familyKey, { accountId: account.accountId, vmId: account.vmId }, { countHit: false })
+      }
+      if (deviceKey && account.vmId && (!currentDeviceVmId || currentDeviceVmId === account.vmId)) {
+        const devicePayload = { accountId: account.accountId, vmId: account.vmId }
+        if (this.stickyRouter.bindDeviceAffinity) {
+          this.stickyRouter.bindDeviceAffinity(deviceKey, devicePayload, { countHit: false })
+        } else {
+          this.stickyRouter.bind?.(deviceKey, devicePayload, { countHit: false })
+        }
       }
     }
     let lastResult = null
@@ -471,6 +484,7 @@ export class FailoverRunner {
       }
       let selected
       try {
+        currentDeviceVmId = deviceKey ? this.stickyRouter?.resolve?.(deviceKey)?.vmId || null : null
         selected = await this.scheduler.selectAndReserve({
           model,
           stickyKey,
@@ -482,6 +496,8 @@ export class FailoverRunner {
           allowWait: true,
           pinVmId,
           familyVmId,
+          deviceVmId: currentDeviceVmId,
+          skipSessionSlot: skipSessionSeat,
           ownerScope,
         })
       } catch (error) {

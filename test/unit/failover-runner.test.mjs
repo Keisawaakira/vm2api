@@ -177,6 +177,46 @@ test('verified hop binds family and session sticky keys to the same account', as
   assert.ok(commits.every((b) => b.value.accountId === 'account-1' && b.value.vmId === 'vm-01'))
 })
 
+test('probe hop passes skipSessionSeat and only updates device affinity', async () => {
+  const scheduler = new Scheduler([candidate(1)])
+  const selectCalls = []
+  const select = scheduler.selectAndReserve.bind(scheduler)
+  scheduler.selectAndReserve = async (opts) => {
+    selectCalls.push(opts)
+    return select(opts)
+  }
+  const sessionBindings = []
+  const deviceBindings = []
+  const runner = new FailoverRunner({
+    scheduler,
+    stickyRouter: {
+      resolve: (key) => (key === 'dev2:device-1' ? { vmId: 'vm-01', accountId: 'account-1' } : null),
+      bind: (key, value, opts) => sessionBindings.push({ key, value, opts }),
+      bindDeviceAffinity: (key, value, opts) => deviceBindings.push({ key, value, opts }),
+    },
+  })
+  const result = await runner.run({
+    requestId: 'req-probe-seatless',
+    canonicalBody: { model: 'claude-haiku-test' },
+    model: 'claude-haiku-test',
+    stickyKey: null,
+    stickyKeys: [],
+    stickyDeviceId: 'device-1',
+    deviceKey: 'dev2:device-1',
+    skipSessionSeat: true,
+    callAttempt: () => success(),
+  })
+  assert.equal(result.ok, true)
+  assert.equal(selectCalls.length, 1)
+  assert.equal(selectCalls[0].skipSessionSlot, true)
+  assert.equal(selectCalls[0].stickyKey, null)
+  assert.deepEqual(selectCalls[0].stickyKeys, [])
+  assert.equal(selectCalls[0].deviceVmId, 'vm-01')
+  assert.deepEqual(sessionBindings, [])
+  assert.equal(deviceBindings.length, 2)
+  assert.ok(deviceBindings.every((binding) => binding.key === 'dev2:device-1'))
+})
+
 test('verified hop stores the outbound session on every sticky alias', async () => {
   const scheduler = new Scheduler([candidate(1)])
   const bindings = []
