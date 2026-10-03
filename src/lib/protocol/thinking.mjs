@@ -15,36 +15,123 @@ export { clampEnabledThinkingBudget, MIN_THINKING_BUDGET }
  *   Manual enabled+budget only: Haiku 4.5, Sonnet/Opus 4.5 and earlier
  *   OAuth (sub2api): Claude 5 / Fable / Opus 4.7+ keep thinking.enabled as-is.
  * Client RikkaHub etc. send adaptive even on Haiku -> 400; convert only there.
+ *
+ * Chat Completions `reasoning_effort` on 4.6+/5 is Claude's output_config.effort
+ * (adaptive), matching CLIProxy. Legacy models still get enabled+budget.
  */
 
 const EFFORT_TO_BUDGET = {
-  minimal: 1024,
-  low: 2048,
+  minimal: 512,
+  low: 1024,
   medium: 8192,
-  high: 16384,
+  high: 24576,
   xhigh: 32768,
-  max: 32768,
+  max: 128000,
 }
 
 const DEFAULT_FALLBACK_BUDGET = 4096
+const OPENAI_CHAT_THINKING_DISPLAY = 'summarized'
 
-export function openaiReasoningToClaudeThinking(body) {
-  let effort = body.reasoning_effort
-  if (!effort && body.reasoning && typeof body.reasoning === 'object') {
+export function readOpenAIReasoningEffort(body = {}) {
+  let effort = body?.reasoning_effort
+  if ((effort == null || effort === '') && body?.reasoning && typeof body.reasoning === 'object') {
     effort = body.reasoning.effort
   }
-  if (!effort) return null
+  if (typeof effort !== 'string') return null
+  return effort.trim().toLowerCase() || null
+}
 
-  const e = String(effort).toLowerCase()
-  if (e === 'none' || e === 'off') {
-    return { type: 'disabled' }
+/** Map OpenAI reasoning_effort onto Claude adaptive effort (low/medium/high/max). */
+export function mapOpenAIEffortToClaudeEffort(effort, { supportsMax = true } = {}) {
+  const normalized = String(effort || '')
+    .trim()
+    .toLowerCase()
+  switch (normalized) {
+    case '':
+      return null
+    case 'none':
+    case 'off':
+      return 'none'
+    case 'minimal':
+      return 'low'
+    case 'low':
+    case 'medium':
+    case 'high':
+      return normalized
+    case 'xhigh':
+    case 'max':
+      return supportsMax ? 'max' : 'high'
+    case 'auto':
+      return 'auto'
+    default:
+      return normalized
+  }
+}
+
+function modelUsesAdaptiveEffort(model = '') {
+  return getCapabilities(model)?.supports_adaptive === true
+}
+
+function clearMappedEffort(out) {
+  if (!out.output_config) return
+  const { effort: _effort, ...rest } = out.output_config
+  if (Object.keys(rest).length) out.output_config = rest
+  else delete out.output_config
+}
+
+/**
+ * Apply OpenAI reasoning_effort / reasoning.effort onto a Claude Messages body.
+ * Adaptive/effort models: thinking.type=adaptive + output_config.effort.
+ * Legacy (Haiku / 4.5): thinking.enabled + budget_tokens.
+ * Chat convert sets display=summarized so unofficial fill does not hide thinking.
+ * Mutates `out`. Call after applyStructuredOutput so effort merges into format.
+ */
+export function applyOpenAIReasoningToClaude(out, source = {}) {
+  if (!out || typeof out !== 'object') return out
+  const raw = readOpenAIReasoningEffort(source)
+  if (!raw) return out
+
+  const model = out.model || source.model || ''
+  const excluded =
+    source.reasoning?.exclude === true ||
+    source.include_reasoning === false ||
+    source.extra_body?.google?.thinking_config?.include_thoughts === false
+  const display = excluded ? 'omitted' : OPENAI_CHAT_THINKING_DISPLAY
+  const mapped = mapOpenAIEffortToClaudeEffort(raw, { supportsMax: modelUsesAdaptiveEffort(model) })
+  if (mapped === 'none') {
+    out.thinking = { type: 'disabled' }
+    clearMappedEffort(out)
+    return out
   }
 
-  const budget = EFFORT_TO_BUDGET[e]
-  if (budget) {
-    return { type: 'enabled', budget_tokens: budget }
+  if (modelUsesAdaptiveEffort(model)) {
+    out.thinking = { type: 'adaptive', display }
+    clearMappedEffort(out)
+    if (mapped && mapped !== 'auto') {
+      const prev = out.output_config && typeof out.output_config === 'object' ? out.output_config : {}
+      out.output_config = { ...prev, effort: mapped }
+    }
+    return out
   }
-  return { type: 'enabled', budget_tokens: EFFORT_TO_BUDGET.medium }
+
+  let budget =
+    raw === 'auto'
+      ? Number(getModelParams(model).thinking_fallback_budget) || DEFAULT_FALLBACK_BUDGET
+      : EFFORT_TO_BUDGET[raw]
+  if (!budget) return out
+  budget = Math.max(MIN_THINKING_BUDGET, budget)
+  // CLIProxy caps generated budgets, not the caller's total output ceiling.
+  const max = Number(out.max_tokens)
+  if (max > MIN_THINKING_BUDGET) budget = Math.min(budget, max - 1)
+  clearMappedEffort(out)
+  out.thinking = { type: 'enabled', budget_tokens: budget, display }
+  return out
+}
+
+export function openaiReasoningToClaudeThinking(body) {
+  const out = { model: body?.model }
+  applyOpenAIReasoningToClaude(out, body)
+  return out.thinking || null
 }
 
 export function claudeThinkingToOpenAIReasoning(claude) {

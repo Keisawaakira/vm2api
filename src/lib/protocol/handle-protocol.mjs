@@ -1,3 +1,13 @@
+import crypto from 'node:crypto'
+import { createRawDebug, observeRaw } from '../admin/raw-debug.mjs'
+import { splitChatThinkingModel } from './chat-thinking.mjs'
+import {
+  runOfflineKernelProbe,
+  replayOfflineKernelReply,
+  inspectOfflineRequests,
+  OFFLINE_INPUT_BYTES,
+} from '../transport/offline-kernel-probe.mjs'
+import { CURRENT_OFFLINE_ROUND, isCurrentOfflineChoice } from '../transport/offline-native-candidate.mjs'
 /**
  * /v1 protocol handler. URLs, auth, and response envelopes stay with the
  * server wiring; this factory owns convert → pool → Go/Rust hop → client.
@@ -19,6 +29,8 @@ import {
   fromClaudeToOpenAIChat,
   fromClaudeToOpenAICompletions,
   fromClaudeToResponses,
+  finishOpenAIChatStream,
+  finishOpenAICompletionStream,
   createOpenAIChatStreamState,
   claudeSSELineToOpenAIChatChunks,
   createOpenAICompletionStreamState,
@@ -27,6 +39,7 @@ import {
   claudeSSELineToResponsesEvents,
   createClaudeMessageAssembler,
   applyClaudeSSELineToMessage,
+  consumeClaudeSSEData,
 } from './convert.mjs'
 import { sanitizeInboundBody, defaultSeedPolicy } from './seed-policy.mjs'
 import { fingerprintRequest } from './client-fingerprint.mjs'
@@ -48,19 +61,21 @@ import { summarizeBody, redactHeaders, presentedApiKeyForLog } from '../admin/re
 import { ownerScopeFromRequest } from '../admin/resource-owner.mjs'
 import {
   resolveInferenceEngine,
+  resolveKernelDataplane,
   resolveOfficialCcInference,
   resolveSlotPersonaPreset,
   slotPersonaModeOverride,
 } from '../vm/slot-engine.mjs'
 import { isValidVmId } from '../vm/vm-file.mjs'
+import { fixedDataplaneSpec } from '../vm/wrap-fixed.mjs'
 import {
   makeError,
   mapUpstreamError,
   rewritePoolErrorForClient,
   validateRequestBody,
   mapModelError,
-  isClientCancelledResult,
   isIncompleteAssistantMessage,
+  isClientCancelledResult,
   finalizeAssembledAssistantHop,
   mergeAssembledAssistantHop,
   incompleteAssistantClientError,
@@ -99,19 +114,24 @@ import {
 } from '../identity/crs-persona.mjs'
 import { createDownstreamKeepalive } from './stream-keepalive.mjs'
 import {
+  hidePersonaUsage,
+  hidePersonaUsageInEvent,
   hidePersonaUsageInSseLine,
   hidePersonaUsageOnMessage,
   personaHideForUnofficial,
   personaHideForCliZero,
 } from '../identity/crs-persona-usage.mjs'
-import {
-  applyCacheTtlToUsage,
-  cacheBreakpointsFromRoutingFile,
-  pinConversationCacheTtl,
-  resolveCacheTtl,
-} from './cache-ttl.mjs'
+import { cacheBreakpointsFromRoutingFile, pinConversationCacheTtl, resolveCacheTtl } from './cache-ttl.mjs'
 import { describeCacheContinuity, trackCachePrefix } from './cache-prefix.mjs'
+import { isClaudeCacheProbe, isClaudeCacheTitleHelper, isClaudeCacheSubagent } from './cache-request.mjs'
 import { ensureClaudeWebSearch, shouldInjectClaudeWebSearch } from './web-search.mjs'
+import {
+  finishProtocolStream,
+  writeProtocolStreamError,
+  writeAnthropicStreamEvent,
+  canWriteProtocolStream,
+  watchClientDisconnect,
+} from './stream-end.mjs'
 import { dispatchStreamInference } from '../transport/kernel-router.mjs'
 import { syncClaudeKernelConfigsFromFile } from '../transport/rust-kernel-supervisor.mjs'
 import { ensureWorkerCredential } from '../transport/go-worker-client.mjs'
@@ -131,7 +151,13 @@ import { applyMinMaxTokens } from './min-max-tokens.mjs'
 import { detectWarmupIntercept, formatWarmupSse, warmupMockMessage } from './warmup-intercept.mjs'
 
 export function createHandleProtocol(deps) {
-  const json = (...args) => deps.json(...args)
+  const rawLifecycles = new WeakMap()
+  const json = (...args) => {
+    try {
+      rawLifecycles.get(args[0])?.beforeJson(args[2])
+    } catch {}
+    return deps.json(...args)
+  }
   const writeSSEHeaders = (...args) => deps.writeSSEHeaders(...args)
   const readBody = (...args) => deps.readBody(...args)
   const requireAuth = (...args) => deps.requireAuth(...args)
@@ -166,29 +192,19 @@ export function createHandleProtocol(deps) {
 
   function bindClientAbort(req, res) {
     const abortController = new AbortController()
-    let settled = false
-    const onGone = () => {
-      if (settled) return
-      if (!abortController.signal.aborted) abortController.abort(new Error('client_aborted'))
-    }
-    req.once('aborted', onGone)
-    res.once('close', onGone)
     return {
       signal: abortController.signal,
-      settle() {
-        settled = true
-        req.off('aborted', onGone)
-        res.off('close', onGone)
-      },
+      // Keep the fork's writableFinished guard: a normal close is not cancellation.
+      settle: watchClientDisconnect(req, res, abortController),
     }
   }
 
-  function mapProtocolClientError(result, logBag, fallbackCode) {
+  function mapProtocolClientError(result, logBag, fallbackCode, clientCancelled) {
     const originalCode = result?.body?.error?.code || fallbackCode
     const originalMessage = result?.body?.error?.message || null
     const details = result?.body?.error?.details || {}
     const mapped = rewritePoolErrorForClient(
-      mapUpstreamError(result?.status || 503, result?.body, result?.headers || {}),
+      mapUpstreamError(result?.status || 503, result?.body, result?.headers || {}, { clientCancelled }),
       result?.body,
     )
     const summary = formatPoolSelectionSummary(details)
@@ -315,48 +331,241 @@ export function createHandleProtocol(deps) {
     reqHeaders,
     timeoutMs,
     idleTimeoutMs,
+    maxExecutions,
     signal,
     deliveryMode,
     toolNames = {},
     want1m = false,
+    cacheTtl,
     preserveCacheBreakpoints = false,
     cliHop = false,
     requestContext = null,
+    chatPreserve = false,
     routing = {},
     noGoFallback = false,
+    rawDebug,
+    dispatchStream = dispatchStreamInference,
   }) {
-    const assembler = createClaudeMessageAssembler()
-    const workerResult = await dispatchStreamInference({
+    const assembler = createClaudeMessageAssembler({ chat: chatPreserve })
+    const workerResult = await dispatchStream({
       exec: candidate.exec,
       body,
       reqHeaders,
       timeoutMs,
       idleTimeoutMs,
+      maxExecutions,
       identity: loadVmIdentity(candidate.exec),
       signal,
       deliveryMode,
       want1m,
       routing,
+      cacheTtl,
       preserveCacheBreakpoints,
       cliHop,
       requestContext,
+      chatPreserve,
       slotWaitMs: candidate.slotWaitMs,
       noGoFallback,
+      rawDebug,
       ensureCredential: (exec) => ensureWorkerCredential(exec),
       onEvent: async (line) => {
-        if (/kin_response_headers/.test(String(line))) return
+        // The SSE parser ignores metadata by event type. Matching the whole line
+        // would delete real text deltas that merely mention kin_response_headers.
         applyClaudeSSELineToMessage(restoreToolNamesInSSELine(line, toolNames), assembler)
       },
     })
-    Object.assign(workerResult, mergeAssembledAssistantHop(workerResult, assembler.message))
+    const nativeStopReason = workerResult.stopReason
+    if (assembler.error) {
+      workerResult.ok = false
+      workerResult.body = { type: 'error', error: assembler.error }
+    } else {
+      // A successful native-only stop must qualify the SSE-backed Chat Message before
+      // merge selection; otherwise the generic worker body loses its private accumulator.
+      // The existing merge still owns explicit transport/terminal/error rejection.
+      if (chatPreserve && workerResult.ok === true && assembler.message && nativeStopReason) {
+        assembler.message.stop_reason = nativeStopReason
+      }
+      Object.assign(workerResult, mergeAssembledAssistantHop(workerResult, assembler.message))
+    }
     if (workerResult?.body) {
       workerResult.body = restoreToolNames(workerResult.body, toolNames)
     }
     return acceptAssistantHop(workerResult)
   }
 
+  async function runOfflineProtocol(req, res, protocol, inbound, logCtx, logBag, rawState) {
+    logBag.via = 'offline-kernel-probe'
+    logBag.attempt_count = 0
+    logBag.usage = null
+    const respond = (code, message, summary = null) => {
+      logBag.error_code = code
+      logBag.final_state = code
+      if (res.destroyed || res.writableEnded) return
+      return json(res, 422, {
+        error: { type: 'offline_diagnostic', code, message },
+        offline: true,
+        request_id: logCtx.request_id,
+        summary,
+      })
+    }
+    if (
+      protocol !== 'openai.chat' ||
+      inbound?.stream !== false ||
+      isClientStream(inbound, req.headers) ||
+      detectInboundPlatform(inbound?.model).platform !== 'anthropic' ||
+      resolveInferenceBackend(req) === 'api'
+    )
+      return respond(
+        'offline_probe_only',
+        'Offline mode only accepts Claude Chat stream:false on a VM backend; no request was sent upstream.',
+      )
+    if (!rawState.candidate || rawState.candidate.record?.status === 'omitted_capacity')
+      return respond(
+        'offline_capture_required',
+        'Enable Debug and raw_nonstream_debug, then retry when capture capacity is available. No upstream fallback.',
+      )
+    if (Buffer.byteLength(rawState.candidate.record.caller?.text || '') > OFFLINE_INPUT_BYTES)
+      return respond('offline_input_limit', 'Offline diagnostics are limited to 1 MiB of caller JSON.')
+    rawState.checkPlatform(inbound.model)
+    if (!isCurrentOfflineChoice(logCtx.offlineKernelDataplane)) {
+      observeRaw(rawState.candidate, 'offlineProbe', {
+        simulation: true,
+        meta: { requested_pairing: logCtx.offlineKernelDataplane, active_round: CURRENT_OFFLINE_ROUND.id },
+        stages: [],
+        error: { code: 'offline_selection_required', message: 'Saved selection is not in the current test round' },
+      })
+      return respond(
+        'offline_selection_required',
+        CURRENT_OFFLINE_ROUND.choices.length
+          ? '请选择并保存本轮待测候选；旧选择未执行，也没有自动换版或回退上游。'
+          : '本轮暂无待测候选，未运行任何诊断，也未调用真实上游。正常推理请先关闭离线验证。',
+        CURRENT_OFFLINE_ROUND.choices,
+      )
+    }
+    const controller = new AbortController()
+    const unwatch = watchClientDisconnect(req, res, controller)
+    let report
+    try {
+      let ctx = {
+        path: pathNameForOffline(req),
+        protocol,
+        headers: { ...req.headers },
+        body: sanitizeInboundBody(inbound, defaultSeedPolicy()),
+      }
+      ctx = applyIntercept(cfg.intercept.rules, 'before_convert', ctx)
+      const valid = validateRequestBody(protocol, ctx.body)
+      if (!valid.ok)
+        return respond('offline_invalid_request', 'Request validation failed; no diagnostic process was started.')
+      if (detectInboundPlatform(ctx.body?.model).platform !== 'anthropic')
+        return respond('offline_model', 'Interception changed the model to an unsupported platform.')
+      const converted = toClaudeMessages(protocol, ctx.body, {
+        thinkingModel: ctx.body.model,
+        rewrite: cfg.rewrite.enabled,
+        model_map: false,
+      })
+      ctx = applyIntercept(cfg.intercept.rules, 'before_upstream', { ...ctx, body: converted.claude })
+      if (detectInboundPlatform(ctx.body?.model).platform !== 'anthropic')
+        return respond('offline_model', 'Interception changed the model to an unsupported platform.')
+      const body = prepareCliHopBody(ctx.body, { stream: true, chatPreserve: true, nodeCacheBreakpoints: false })
+      body.metadata = {
+        user_id: JSON.stringify({
+          device_id: crypto.createHash('sha256').update(logCtx.request_id).digest('hex'),
+          account_uuid: '00000000-0000-4000-8000-000000000000',
+          session_id: logCtx.request_id,
+        }),
+      }
+      const envelope = {
+        body,
+        headers: { 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        stream: true,
+        delivery_mode: 'realtime',
+        preserve_cache_breakpoints: false,
+      }
+      report = await (deps.runOfflineKernelProbe || runOfflineKernelProbe)({
+        projectRoot: cfg.paths.project,
+        vmId: req.headers?.['x-kin-vm'],
+        routing: getRouting() || {},
+        plane: logCtx.offlineKernelDataplane,
+        envelope,
+        signal: controller.signal,
+      })
+      logBag.vm_id = report.meta?.vm_id || null
+      for (const stage of report.stages || []) {
+        stage.request_checks = inspectOfflineRequests(body, stage.captures)
+        const replay = await (deps.replayOfflineKernelReply || replayOfflineKernelReply)(
+          stage,
+          streamAndAssembleClaudeMessage,
+          { signal: controller.signal },
+        )
+        if (!replay.observed) {
+          stage.node = replay
+          continue
+        }
+        const result = replay.result
+        const chat = result?.ok ? fromClaudeToOpenAIChat(result.body, inbound.model, 'offline') : null
+        stage.node = {
+          observed: true,
+          ok: result?.ok === true,
+          status: result?.status,
+          terminal_state: result?.terminalState,
+          message: result?.body,
+          chat,
+        }
+        const expected = (stage.fixture?.content || [])
+          .filter((b) => b.type === 'text')
+          .map((b) => b.text)
+          .join('')
+        const actual = chat?.choices?.[0]?.message?.content
+        stage.checks = {
+          expected_characters: [...expected].length,
+          actual_characters: typeof actual === 'string' ? [...actual].length : null,
+          expected_sha256: crypto.createHash('sha256').update(expected).digest('hex'),
+          actual_sha256: typeof actual === 'string' ? crypto.createHash('sha256').update(actual).digest('hex') : null,
+          text_equal: typeof actual === 'string' && expected === actual,
+        }
+      }
+      const storedComplete = observeRaw(rawState.candidate, 'offlineProbe', report) === true
+      const complete =
+        storedComplete &&
+        (report.stages || []).length === 2 &&
+        report.stages.every((s) => s.status === 'completed' && s.capture_complete === true && s.checks?.text_equal)
+      return respond(
+        complete ? 'offline_probe_captured' : 'offline_probe_incomplete',
+        complete
+          ? '离线链路已截获；未调用真实模型。请导出此请求的原始 JSONL，不要把诊断结果当作模型回答。'
+          : '离线诊断有缺失或差异；未回退到真实上游。请导出此请求的原始 JSONL。',
+        {
+          vm_id: report.meta?.vm_id,
+          pairing: report.meta?.selected_pairing,
+          phases: (report.stages || []).map((s) => ({ name: s.name, status: s.status, checks: s.checks })),
+        },
+      )
+    } catch (error) {
+      report ||= { simulation: true, stages: [], meta: error?.diagnostic?.meta }
+      report.error = {
+        code: error?.code || 'offline_probe_failed',
+        message: String(error?.message || error).slice(0, 300),
+        diagnostic: error?.diagnostic,
+      }
+      observeRaw(rawState.candidate, 'offlineProbe', report)
+      return respond(
+        error?.code || 'offline_probe_failed',
+        '离线诊断未完成；未调用真实上游。请检查原始诊断记录中的错误。',
+      )
+    } finally {
+      unwatch?.()
+    }
+  }
+
+  function pathNameForOffline(req) {
+    return String(req.url || '/v1/chat/completions').split('?')[0]
+  }
+
   async function handleProtocol(req, res, protocol, pathName) {
     const logCtx = requestLog.start(req, { protocol, pathName })
+    // Snapshot mode at request admission. Turning it off cannot turn an admitted probe into real inference.
+    logCtx.offlineKernelProbe = requestLog.offlineKernelProbe === true
+    logCtx.offlineKernelDataplane = requestLog.offlineKernelDataplane || 'current'
     res._kinRequestId = logCtx.request_id
     const logBag = {
       protocol,
@@ -386,20 +595,121 @@ export function createHandleProtocol(deps) {
       first_token_ms: null,
       stop_reason: null,
     }
+    let rawCandidate = null
+    let rawEnrolled = false
+    let handlerFailed = false
+    let responseError = false
+    const onRawResponseError = () => {
+      responseError = true
+    }
+    const promoteRaw = () => {
+      if (!rawCandidate || rawEnrolled) return
+      logCtx.caller_request_id = String(req.headers?.['x-request-id'] || '').slice(0, 128) || null
+      logCtx.request_id = crypto.randomUUID()
+      res._kinRequestId = logCtx.request_id
+      rawEnrolled = true
+    }
+    const finishLog = (rawExtra = {}) => {
+      const groupId = req.apiKeyRecord?.group_id ?? 1
+      return requestLog.finish(logCtx, {
+        status: res.statusCode || 0,
+        api_key_kind: req.apiKeyKind || null,
+        api_key_id: req.apiKeyRecord?.id || null,
+        user_id: req.apiKeyRecord?.user_id ?? null,
+        group_id: groupId,
+        rate_multiplier: deps.groupsRepo.rateMultiplier(groupId),
+        ...logBag,
+        ...rawExtra,
+      })
+    }
+    rawLifecycles.set(res, {
+      beforeJson(body) {
+        promoteRaw()
+        observeRaw(rawCandidate, 'derived', 'client_json', body)
+      },
+    })
     res.on('finish', () => {
+      if (rawEnrolled) return
       try {
-        const groupId = req.apiKeyRecord?.group_id ?? 1
-        requestLog.finish(logCtx, {
-          status: res.statusCode || 0,
-          api_key_kind: req.apiKeyKind || null,
-          api_key_id: req.apiKeyRecord?.id || null,
-          user_id: req.apiKeyRecord?.user_id ?? null,
-          group_id: groupId,
-          rate_multiplier: deps.groupsRepo.rateMultiplier(groupId),
-          ...logBag,
-        })
+        finishLog()
       } catch {}
     })
+    const rawState = {
+      get candidate() {
+        return rawCandidate
+      },
+      get enrolled() {
+        return rawEnrolled
+      },
+      onParsedRaw: (raw, parsed, bytes) => {
+        if (
+          requestLog.rawNonstreamDebug !== true ||
+          requestLog.mode === 'off' ||
+          logCtx.mode !== 'debug' ||
+          protocol !== 'openai.chat' ||
+          parsed?.stream !== false ||
+          isClientStream(parsed, req.headers) ||
+          detectInboundPlatform(parsed?.model).platform !== 'anthropic'
+        )
+          return
+        rawCandidate = createRawDebug(raw, bytes)
+        res.once('error', onRawResponseError)
+      },
+      checkPlatform(model) {
+        if (rawCandidate && detectInboundPlatform(model).platform !== 'anthropic') {
+          observeRaw(rawCandidate, 'release')
+          rawCandidate = null
+          res.off?.('error', onRawResponseError)
+        } else promoteRaw()
+      },
+    }
+    try {
+      return await runProtocol(req, res, protocol, pathName, logCtx, logBag, rawState)
+    } catch (error) {
+      handlerFailed = true
+      if (rawCandidate) {
+        logBag.error_code = logBag.error_code || 'handler_exception'
+        // The outer HTTP handler maps uncaught exceptions using this same status.
+        logBag.status = error?.status || 500
+      }
+      throw error
+    } finally {
+      // All awaited dispatch/readers and their cleanup have settled before this snapshot.
+      // finish/close are not persistence owners; they can race with producer cleanup.
+      try {
+        if (rawCandidate) {
+          promoteRaw()
+          const raw = observeRaw(rawCandidate, 'settle', {
+            cancelled: res.writableFinished !== true && (!!res.destroyed || !!req.aborted),
+            failed: handlerFailed || responseError || !!logBag.error_code || res.statusCode >= 400,
+            clientComplete: res.writableFinished === true,
+          }) || { version: 1, status: 'capture_failed' }
+          finishLog({
+            raw_debug: raw,
+            raw_debug_info: observeRaw(rawCandidate, 'info'),
+            error_message: logCtx.offlineKernelProbe
+              ? 'Offline diagnostic only; no real provider request'
+              : logBag.error_code
+                ? 'Diagnostic request failed; see protected raw evidence'
+                : null,
+          })
+        }
+      } catch {
+        try {
+          console.warn(`[raw-debug] request=${logCtx.request_id} code=finalize_failed`)
+        } catch {}
+      } finally {
+        observeRaw(rawCandidate, 'release')
+        rawCandidate = null
+        try {
+          res.off?.('error', onRawResponseError)
+        } catch {}
+        rawLifecycles.delete(res)
+      }
+    }
+  }
+
+  async function runProtocol(req, res, protocol, pathName, logCtx, logBag, rawState) {
     if (!requireAuth(req, res)) {
       logBag.error_code = req.authError?.code || ErrorCode.INVALID_API_KEY
       logBag.error_message = req.authError?.message || 'Invalid credentials'
@@ -407,9 +717,30 @@ export function createHandleProtocol(deps) {
       return
     }
 
+    if (logCtx.offlineKernelProbe && req.apiKeyKind !== 'master') {
+      logBag.error_code = 'offline_master_required'
+      logBag.via = 'offline-kernel-probe'
+      return json(res, 422, {
+        error: {
+          type: 'offline_diagnostic',
+          code: 'offline_master_required',
+          message:
+            'Offline mode is active; only master-key diagnostic requests are accepted. No request was sent upstream.',
+        },
+      })
+    }
     let inbound
     try {
-      inbound = await readBody(req, cfg.limits.max_body_bytes)
+      inbound = await readBody(
+        req,
+        cfg.limits.max_body_bytes,
+        requestLog.rawNonstreamDebug === true &&
+          requestLog.mode !== 'off' &&
+          logCtx.mode === 'debug' &&
+          protocol === 'openai.chat'
+          ? rawState.onParsedRaw
+          : undefined,
+      )
     } catch (error) {
       stats.errors++
       logBag.error_code = error?.body?.error?.code || ErrorCode.INVALID_JSON
@@ -432,6 +763,9 @@ export function createHandleProtocol(deps) {
     logBag.requested_model = inbound?.model || null
     logBag.stream = isClientStream(inbound, req.headers)
     logBag.has_tools = Array.isArray(inbound?.tools) && inbound.tools.length > 0
+
+    if (logCtx.offlineKernelProbe)
+      return await runOfflineProtocol(req, res, protocol, inbound, logCtx, logBag, rawState)
 
     const fp = fingerprintRequest(req, inbound)
     const healthDecision = getHealthMonitor()?.decide?.(req.headers, inbound, protocol)
@@ -495,6 +829,7 @@ export function createHandleProtocol(deps) {
       headers: { ...req.headers },
     }
     ctx = applyIntercept(cfg.intercept.rules, 'before_convert', ctx)
+    observeRaw(rawState, 'checkPlatform', ctx.body?.model)
     const bodyCheck = validateRequestBody(protocol, ctx.body)
     if (!bodyCheck.ok) {
       stats.errors++
@@ -614,8 +949,11 @@ export function createHandleProtocol(deps) {
         }).body,
       )
     }
+    const chatThinkingModel = ctx.body?.model
     if (inferenceBackend !== 'api') {
-      const modelCheck = validateOfficialModel(ctx.body?.model)
+      const modelCheck = validateOfficialModel(
+        protocol === 'openai.chat' ? splitChatThinkingModel(ctx.body?.model).model : ctx.body?.model,
+      )
       if (!modelCheck.ok) {
         stats.errors++
         const errorResult = mapModelError(modelCheck)
@@ -629,11 +967,25 @@ export function createHandleProtocol(deps) {
 
     const hdrRewrite = String(req.headers['x-kin-rewrite'] || '') === '1'
     const rewriteEnabled = cfg.rewrite.enabled || hdrRewrite
-    const converted = toClaudeMessages(protocol, ctx.body, {
-      rewrite: rewriteEnabled,
-      model_map: false,
-      strict_passthrough: String(req.headers['x-kin-strict-passthrough'] || '') === '1',
-    })
+    const chatPreserve = protocol === 'openai.chat'
+    let converted
+    try {
+      converted = toClaudeMessages(protocol, ctx.body, {
+        thinkingModel: chatThinkingModel,
+        rewrite: rewriteEnabled,
+        model_map: false,
+        strict_passthrough: String(req.headers['x-kin-strict-passthrough'] || '') === '1',
+      })
+    } catch (error) {
+      if (error?.code !== 'invalid_chat_request') throw error
+      stats.errors++
+      logBag.error_code = error.code
+      logBag.error_message = error.message
+      return json(res, 400, {
+        type: 'error',
+        error: { type: 'invalid_request_error', code: error.code, message: error.message },
+      })
+    }
     stats.requests++
     stats.by_route[protocol] = (stats.by_route[protocol] || 0) + 1
     if (converted.mode === 'passthrough') stats.passthrough++
@@ -641,10 +993,13 @@ export function createHandleProtocol(deps) {
     else stats.convert++
 
     ctx = applyIntercept(cfg.intercept.rules, 'before_upstream', { ...ctx, body: converted.claude })
+    // Preserve accepted helper classification before the outbound token floor.
+    const cacheRequestMaxTokens = ctx.body?.max_tokens
     const officialTraffic =
       isOfficialClaudeCodeTraffic(req.headers, inbound) ||
       (detectProxiedOfficialCcFromRoutingFile(routingConfigPath) && isProxiedOfficialClaudeCode(inbound, req.headers))
-    const requestContext = classifyClaudeRequestPurpose(inbound, { officialTraffic })
+    const requestContext =
+      protocol === 'anthropic.messages' ? classifyClaudeRequestPurpose(inbound, { officialTraffic }) : null
     if (requestContext) {
       logBag.classifier = classifierRequestSummary(inbound, ctx.body, requestContext)
       try {
@@ -742,17 +1097,36 @@ export function createHandleProtocol(deps) {
       vmId: stickyBound?.vmId || '',
       epoch: 'pending',
     })
-    const requestedCacheTtl = pinConversationCacheTtl(
-      stickyKey || callerSession || outboundSessionId,
-      resolveCacheTtl({ headers: req.headers, body: inbound, routingFile: routingConfigPath }),
-    )
-    let cacheTtl = requestedCacheTtl
+    // Classify the accepted Claude shape, before persona/CLI transforms remove
+    // cache markers or change helper max_tokens. Only original parent metadata
+    // survives as a separate signal; never merge raw tools/fields back in.
+    // Converter-owned, non-wire hint. Interceptors that alter/remove its instruction invalidate it.
+    const formatHint = converted.cacheTitleHint
+    const cachePolicyInput = { ...ctx.body, max_tokens: cacheRequestMaxTokens }
+    const cachePolicyBody =
+      chatPreserve && formatHint && cachePolicyInput.system?.at(-1)?.text === formatHint.instruction
+        ? { ...cachePolicyInput, output_config: formatHint.outputConfig }
+        : cachePolicyInput
+    const cacheSubagent =
+      isClaudeCacheSubagent(req.headers, ctx.body) || isClaudeCacheSubagent({}, { metadata: inbound?.metadata })
+    const auxiliaryCacheRequest =
+      !!requestContext ||
+      isClaudeCacheProbe(cachePolicyBody) ||
+      isClaudeCacheTitleHelper(cachePolicyBody) ||
+      cacheSubagent
+    const cacheOptions = {
+      headers: req.headers,
+      body: cachePolicyBody,
+      subagent: cacheSubagent,
+      routingFile: routingConfigPath,
+    }
+    let cacheTtl = resolveCacheTtl(cacheOptions)
     let preserveCacheBreakpoints = false
     const cacheBreakpoints = cacheBreakpointsFromRoutingFile(routingConfigPath)
     const openaiCompat = String(protocol || '').startsWith('openai.')
     syncClaudeKernelConfigsFromFile(cfg.paths?.project, routingConfigPath)
     const personaMode = personaModeFromRoutingFile(routingConfigPath)
-    if (!requestContext && !officialClient && !officialTraffic) {
+    if (!requestContext && !chatPreserve && !officialClient && !officialTraffic) {
       ctx.body = ensureClaudeWebSearch(ctx.body, {
         enabled: shouldInjectClaudeWebSearch({
           officialClient: officialTraffic,
@@ -763,7 +1137,7 @@ export function createHandleProtocol(deps) {
       })
     }
     const personaIn = ctx.body
-    if (!requestContext)
+    if (!requestContext && !chatPreserve)
       ctx.body = applyCrsUnofficialPersona(ctx.body, {
         officialClient: officialTraffic,
         routingFile: routingConfigPath,
@@ -772,14 +1146,15 @@ export function createHandleProtocol(deps) {
         model: ctx.body?.model,
         cliVersion: OFFICIAL_CLI_VERSION,
       })
-    let personaHideTokens = requestContext
-      ? 0
-      : personaHideForUnofficial(personaIn, ctx.body, {
-          officialClient: officialTraffic,
-          mode: personaMode,
-          hides: personaHidesUsageFromRoutingFile(routingConfigPath),
-          standing: standingUsageFromRoutingFile(routingConfigPath),
-        })
+    let personaHideTokens =
+      requestContext || chatPreserve
+        ? 0
+        : personaHideForUnofficial(personaIn, ctx.body, {
+            officialClient: officialTraffic,
+            mode: personaMode,
+            hides: personaHidesUsageFromRoutingFile(routingConfigPath),
+            standing: standingUsageFromRoutingFile(routingConfigPath),
+          })
 
     if (inferenceBackend === 'api') {
       const managedKey = req.apiKeyRecord || null
@@ -827,6 +1202,7 @@ export function createHandleProtocol(deps) {
           personaHideTokens,
           cacheTtl,
           requestContext,
+          rawDebug: rawState.enrolled ? { collector: rawState.candidate } : undefined,
           converters: {
             createClaudeMessageAssembler,
             applyClaudeSSELineToMessage,
@@ -851,7 +1227,7 @@ export function createHandleProtocol(deps) {
       logBag.account_id = result?.accountId || null
       logBag.final_account_id = result?.accountId || null
       logBag.upstream_status = result?.status ?? null
-      logBag.usage = result?.body?.usage || result?.usage || null
+      logBag.usage = result?.usage || result?.body?.usage || null
       logBag.upstream_model = result?.model || null
       logBag.first_token_ms = result?.ttftMs ?? null
       logBag.final_state = result?.terminalState || null
@@ -863,24 +1239,27 @@ export function createHandleProtocol(deps) {
           })
         } catch {}
       }
+      if (clientAbort.signal.aborted || isClientCancelledResult(result)) return finishClientCancel(res, result, logBag)
       if (clientStream) {
-        if (isClientCancelledResult(result)) return finishClientCancel(res, result, logBag)
         if (!res.headersSent) {
-          const mapped = mapProtocolClientError(result, logBag, 'api_pool_exhausted')
-          if (!isClientCancelledResult(result)) stats.errors++
+          const mapped = mapProtocolClientError(result, logBag, 'api_pool_exhausted', false)
+          stats.errors++
           return json(res, mapped.status, mapped.body)
         }
-        if (result?.ok && protocol !== 'anthropic.messages') res.write('data: [DONE]\n\n')
-        return res.end()
+        const errorBody = !result?.ok
+          ? mapProtocolClientError(result, logBag, 'stream_incomplete', false).body
+          : undefined
+        if (!result?.ok) stats.errors++
+        return finishProtocolStream(res, { protocol, ok: result?.ok === true, errorBody })
       }
       if (!result?.ok) {
-        if (isClientCancelledResult(result)) return finishClientCancel(res, result, logBag)
-        const mapped = mapProtocolClientError(result, logBag, 'upstream_error')
+        const mapped = mapProtocolClientError(result, logBag, 'upstream_error', false)
         stats.errors++
         return json(res, mapped.status, mapped.body)
       }
       let output
-      const clientBody = hidePersonaUsageOnMessage(result.body, personaHideTokens)
+      observeRaw(rawState.candidate, 'derived', 'assembled_message', result.body)
+      const clientBody = chatPreserve ? result.body : hidePersonaUsageOnMessage(result.body, personaHideTokens)
       if (protocol === 'anthropic.messages') output = clientBody
       else if (protocol === 'openai.chat') output = fromClaudeToOpenAIChat(clientBody, inbound.model)
       else if (protocol === 'openai.completions') output = fromClaudeToOpenAICompletions(clientBody, inbound.model)
@@ -888,7 +1267,7 @@ export function createHandleProtocol(deps) {
       return json(res, 200, output)
     }
 
-    const canonicalBody = officialMessagesBody(ctx.body)
+    const canonicalBody = chatPreserve ? structuredClone(ctx.body) : officialMessagesBody(ctx.body)
     const streamKeepaliveMs = Number(
       getRouting()?.failover?.stream_keepalive_ms ?? cfg.limits.stream_keepalive_ms ?? 15_000,
     )
@@ -936,6 +1315,7 @@ export function createHandleProtocol(deps) {
       const where = prefix.break.section === 'messages' ? `messages[${prefix.break.index}]` : prefix.break.section
       console.warn(`[cache-prefix] request ${logCtx.request_id} turn ${prefix.turn} broke at ${where}`)
     }
+    let clientStreamState
     let result
     try {
       result = await getFailoverRunner().run({
@@ -978,15 +1358,34 @@ export function createHandleProtocol(deps) {
           })
           if (identity && attemptSessionId) identity.callerSessionId = attemptSessionId
           const credMode = credentialModeFromOauth(selected.vm?.claude || {})
+          // Resolve after selection on every retry: accounts may use different credential kinds.
+          const resolvedCacheTtl = resolveCacheTtl({ ...cacheOptions, credentialMode: credMode })
+          // Helpers/subagents (even explicit 1h) neither read nor refresh the
+          // ordinary conversation pin. Keep its selected-account/session key.
+          cacheTtl = auxiliaryCacheRequest
+            ? resolvedCacheTtl
+            : pinConversationCacheTtl(`${selected.accountId || ''}:${attemptSessionId}`, resolvedCacheTtl)
           const modeOverride = slotPersonaModeOverride(selected.vm)
           const routingNow = getRouting()
           const cliHop = resolveOfficialCcInference(selected.vm, routingNow) === 'cli-hop'
+          // Original wrap and the refreshed fixed CLIs share the explicit-marker contract.
+          // Ordinary cc/crag retain their legacy kernel stamping and separate TTL hint.
+          const dataplane = resolveKernelDataplane(selected.vm, routingNow)
+          const nodeCacheBreakpoints =
+            cliHop && (dataplane === 'wrap' || fixedDataplaneSpec(dataplane)?.cacheContract === 'node_dual_anchor_v1')
+          preserveCacheBreakpoints = !!requestContext || nodeCacheBreakpoints
+          if (requestContext) cacheTtl = null
           let hopBody = body
           if (cliHop) {
+            // Carry the selected TTL in explicit wrap anchors or the legacy kernel hint.
             const repaired = extra.repaired === true
             const resolvedPersona = resolveSlotPersonaPreset(selected.vm, routingNow)
             const cliAppliesNodePersona =
-              !requestContext && !officialTraffic && resolvedPersona !== 'zero' && resolvedPersona !== 'official_full'
+              !requestContext &&
+              !chatPreserve &&
+              !officialTraffic &&
+              resolvedPersona !== 'zero' &&
+              resolvedPersona !== 'official_full'
             if (cliAppliesNodePersona) {
               hopBody = applyCrsUnofficialPersona(structuredClone(personaIn), {
                 officialClient: false,
@@ -1009,8 +1408,10 @@ export function createHandleProtocol(deps) {
             hopBody = prepareCliHopBody(repaired ? body : hopBody, {
               stream: upstreamStream,
               repaired,
-              cacheTtl: requestedCacheTtl,
+              cacheTtl,
               requestContext,
+              chatPreserve,
+              nodeCacheBreakpoints,
             })
             hopBody = await materializeRemoteImageSources(hopBody)
             if (identity) {
@@ -1025,15 +1426,11 @@ export function createHandleProtocol(deps) {
                 epoch: attemptStartedAt,
               })
             }
-            preserveCacheBreakpoints = true
-            cacheTtl = requestedCacheTtl
             if (getRouting()?.logging?.mode === 'debug') logBag.outbound_body = hopBody
 
-            // 0注入 hides CLI billing + env and the standing Node left in the leftover.
-            // 官方提示词 must show real usage.
-            const cliHide = requestContext
-              ? 0
-              : resolvedPersona === 'official'
+            // Classifier/Chat stay unmasked; other paths retain the selected preset's policy.
+            const cliHide =
+              requestContext || chatPreserve || resolvedPersona === 'official'
                 ? 0
                 : personaHideForCliZero(personaIn, hopBody, {
                     officialClient: officialTraffic,
@@ -1042,7 +1439,12 @@ export function createHandleProtocol(deps) {
                     overlay: cliAppliesNodePersona ? 0 : personaHideTokens?.overlay,
                     hides: personaHidesUsageFromRoutingFile(routingConfigPath, resolvedPersona),
                   })
-            personaHideTokens = cliAppliesNodePersona ? (Number(personaHideTokens) || 0) + cliHide : cliHide
+            // Node persona measurement above is fresh for this selected attempt.
+            personaHideTokens = chatPreserve
+              ? 0
+              : cliAppliesNodePersona
+                ? (Number(personaHideTokens) || 0) + cliHide
+                : cliHide
             logBag.inference_engine = resolveInferenceEngine(selected.vm, routingNow)
             logBag.persona_preset = resolveSlotPersonaPreset(selected.vm, routingNow)
             logBag.official_cc_inference = 'cli-hop'
@@ -1052,18 +1454,26 @@ export function createHandleProtocol(deps) {
               inbound,
               outbound: hopBody,
               layer: 'node_object',
-              ttl: requestedCacheTtl,
+              ttl: cacheTtl,
               sessionId: attemptSessionId,
               vmId: selected.vmId,
               accountId: selected.accountId,
               requestId: logCtx.request_id,
             })
             noteCachePrefix(selected, attemptSessionId, hopBody)
-            return { body: hopBody, meta: { toolNames: {}, sessionId: attemptSessionId, cliHop: true, requestContext } }
+            return {
+              body: hopBody,
+              meta: {
+                toolNames: {},
+                sessionId: attemptSessionId,
+                cliHop: true,
+                requestContext,
+                repaired: extra.repaired === true,
+              },
+            }
           }
 
-          cacheTtl = requestedCacheTtl
-          if (!requestContext && !officialTraffic && modeOverride) {
+          if (!requestContext && !chatPreserve && !officialTraffic && modeOverride) {
             const rewritten = applyCrsUnofficialPersona(structuredClone(personaIn), {
               officialClient: officialTraffic,
               routingFile: routingConfigPath,
@@ -1089,6 +1499,7 @@ export function createHandleProtocol(deps) {
           const prepared = prepareOutboundEnvelope({
             requestContext,
             canonicalBody: hopBody,
+            chatPreserve,
             inbound,
             identity,
             unofficial: !officialTraffic,
@@ -1129,13 +1540,26 @@ export function createHandleProtocol(deps) {
             requestId: logCtx.request_id,
           })
           noteCachePrefix(selected, attemptSessionId, prepared.body)
-          return { body: prepared.body, meta: { toolNames: prepared.toolNames, sessionId: attemptSessionId } }
+          return {
+            body: prepared.body,
+            meta: { toolNames: prepared.toolNames, sessionId: attemptSessionId, repaired: extra.repaired === true },
+          }
         },
-        callAttempt: async ({ candidate, body, attemptMeta, deliveryMode: attemptDelivery, signal, onCommit }) => {
+        callAttempt: async ({
+          candidate,
+          body,
+          attemptMeta,
+          attemptNo,
+          maxExecutions,
+          deliveryMode: attemptDelivery,
+          signal,
+          onCommit,
+        }) => {
           if (!clientStream) {
             return streamAndAssembleClaudeMessage({
               candidate,
               body,
+              maxExecutions,
               reqHeaders: req.headers,
               timeoutMs: cfg.limits.upstream_timeout_ms,
               idleTimeoutMs: streamIdleTimeoutMs,
@@ -1146,37 +1570,61 @@ export function createHandleProtocol(deps) {
               preserveCacheBreakpoints,
               cliHop: attemptMeta?.cliHop === true,
               requestContext: attemptMeta?.requestContext || requestContext,
+              chatPreserve,
               want1m,
               routing: getRouting(),
               noGoFallback: !!pinVmId,
+              rawDebug: rawState.enrolled
+                ? {
+                    collector: rawState.candidate,
+                    nativeTrace:
+                      requestLog?.ccNativeTrace === true
+                        ? { projectRoot: cfg.paths.project, requestId: logCtx.request_id }
+                        : undefined,
+                    context: {
+                      attemptNo,
+                      repaired: attemptMeta?.repaired === true,
+                      accountId: candidate.accountId,
+                      vmId: candidate.vmId,
+                    },
+                  }
+                : undefined,
             })
           }
           let state
+          const upstreamEventState = { dataBuf: '' }
           if (protocol === 'openai.chat') {
-            state = createOpenAIChatStreamState(inbound.model || body.model, candidate.vmId)
+            state = createOpenAIChatStreamState(inbound.model || body.model, candidate.vmId, {
+              includeUsage: inbound.stream_options?.include_usage === true,
+            })
           } else if (protocol === 'openai.completions') {
-            state = createOpenAICompletionStreamState(inbound.model || body.model, candidate.vmId)
+            state = createOpenAICompletionStreamState(inbound.model || body.model, candidate.vmId, {
+              includeUsage: inbound.stream_options?.include_usage === true,
+            })
           } else if (protocol === 'openai.responses') {
             state = createResponsesStreamState(inbound.model || body.model, candidate.vmId)
           }
+          clientStreamState = state
           const keepalive = createDownstreamKeepalive({
             intervalMs: streamKeepaliveMs,
             userAgent: req.headers['user-agent'] || req.headers['User-Agent'] || '',
             protocol,
             write: (chunk) => {
-              if (res.writableEnded || res.destroyed) return
+              if (signal?.aborted || !canWriteProtocolStream(res)) return
               if (!res.headersSent) writeSSEHeaders(res)
               res.write(chunk)
             },
           })
           keepalive.start()
           try {
-            return await dispatchStreamInference({
+            const streamed = await dispatchStreamInference({
               exec: candidate.exec,
+              maxExecutions,
               cacheTtl,
               preserveCacheBreakpoints,
               cliHop: attemptMeta?.cliHop === true,
               requestContext: attemptMeta?.requestContext || requestContext,
+              chatPreserve,
               body,
               reqHeaders: req.headers,
               timeoutMs: cfg.limits.upstream_timeout_ms,
@@ -1190,24 +1638,35 @@ export function createHandleProtocol(deps) {
               noGoFallback: !!pinVmId,
               ensureCredential: (exec) => ensureWorkerCredential(exec),
               onCommit: () => {
+                if (signal?.aborted || !canWriteProtocolStream(res)) return
                 if (protocol === 'anthropic.messages' && !res.headersSent) writeSSEHeaders(res)
                 onCommit()
               },
               onEvent: async (line) => {
-                if (/kin_response_headers/.test(String(line))) return
+                if (signal?.aborted || !canWriteProtocolStream(res)) return
                 line = restoreToolNamesInSSELine(line, attemptMeta?.toolNames || {})
-                if (personaHideTokens) line = hidePersonaUsageInSseLine(line, personaHideTokens, cacheTtl)
+                const event = consumeClaudeSSEData(line, upstreamEventState)
+                if (!event || event.type === 'kin_response_headers') return
+                if (event.type === 'error') {
+                  if (!res.headersSent) writeSSEHeaders(res)
+                  writeProtocolStreamError(res, protocol, event)
+                  return
+                }
+                const clientEvent = chatPreserve ? event : hidePersonaUsageInEvent(event, personaHideTokens, cacheTtl)
+                line = `data: ${JSON.stringify(clientEvent)}`
                 keepalive.observeLine(line)
                 if (protocol === 'anthropic.messages') {
                   if (!res.headersSent) writeSSEHeaders(res)
-                  res.write(String(line).endsWith('\n') ? String(line) : String(line) + '\n')
+                  writeAnthropicStreamEvent(res, clientEvent)
                   return
                 }
                 const writeChunks = (chunks) => {
                   if (!chunks.length) return
                   if (!res.headersSent) writeSSEHeaders(res)
                   for (const chunk of chunks) {
-                    res.write(`data: ${JSON.stringify(chunk)}\n\n`)
+                    if (signal?.aborted || !canWriteProtocolStream(res)) break
+                    if (chunk.error) writeProtocolStreamError(res, protocol, chunk)
+                    else res.write(`data: ${JSON.stringify(chunk)}\n\n`)
                   }
                 }
                 if (protocol === 'openai.chat') {
@@ -1221,6 +1680,15 @@ export function createHandleProtocol(deps) {
                 writeChunks(claudeSSELineToResponsesEvents(line, state))
               },
             })
+            if (chatPreserve && state?.error)
+              return {
+                ...streamed,
+                ok: false,
+                body: { type: 'error', error: state.error },
+                terminalState: 'failed',
+                committed: res.headersSent || streamed.committed,
+              }
+            return streamed
           } finally {
             keepalive.stop()
           }
@@ -1243,8 +1711,7 @@ export function createHandleProtocol(deps) {
     logBag.attempt_count = result?.attemptCount ?? 0
     logBag.final_state = result?.finalState || result?.terminalState || null
     logBag.upstream_status = result?.status ?? null
-    logBag.usage = result?.body?.usage || result?.usage || null
-    if (logBag.usage && cacheTtl) logBag.usage = applyCacheTtlToUsage(logBag.usage, cacheTtl)
+    logBag.usage = result?.usage || result?.body?.usage || null
     // Fast mode bills 2x; upstream usage.speed wins, the request speed is only a fallback.
     if (logBag.usage && wantsFastMode(ctx.body)) logBag.usage = { ...logBag.usage, requested_speed: 'fast' }
     logBag.upstream_model = result?.body?.model || result?.model || null
@@ -1298,35 +1765,44 @@ export function createHandleProtocol(deps) {
       }
     }
 
+    if (clientAbort.signal.aborted || isClientCancelledResult(result)) return finishClientCancel(res, result, logBag)
     if (clientStream) {
-      if (isClientCancelledResult(result)) return finishClientCancel(res, result, logBag)
       if (!res.headersSent) {
-        const mapped = mapProtocolClientError(result, logBag, result?.body?.error?.code || 'upstream_error')
-        if (!isClientCancelledResult(result) && mapped.body?.error?.code !== 'client_cancelled') stats.errors++
+        const mapped = mapProtocolClientError(result, logBag, result?.body?.error?.code || 'upstream_error', false)
+        stats.errors++
         return sendMapped(res, mapped)
       }
-      if (result?.ok && protocol !== 'anthropic.messages') {
-        res.write('data: [DONE]\n\n')
-      }
-      if (!result?.ok) {
-        stats.errors++
-        logBag.error_code = result?.body?.error?.code || 'stream_incomplete'
-        logBag.error_message = result?.body?.error?.message || 'Stream did not reach a verified terminal state'
+      if (!result?.ok) stats.errors++
+      const errorBody = !result?.ok
+        ? mapProtocolClientError(result, logBag, 'stream_incomplete', false).body
+        : undefined
+      if (result?.ok && clientStreamState && canWriteProtocolStream(res)) {
+        const usage = chatPreserve ? logBag.usage : hidePersonaUsage(logBag.usage, personaHideTokens, cacheTtl)
+        const stopReason = result.stopReason || result.body?.stop_reason
+        const tail =
+          protocol === 'openai.chat'
+            ? finishOpenAIChatStream(clientStreamState, usage, stopReason)
+            : protocol === 'openai.completions'
+              ? finishOpenAICompletionStream(clientStreamState, usage, stopReason)
+              : []
+        for (const chunk of tail) {
+          res.write(`data: ${JSON.stringify(chunk)}\n\n`)
+        }
       }
       rememberRefusal({ inbound, body: ctx.body, result, logBag, requestId: logCtx.request_id })
-      return res.end()
+      return finishProtocolStream(res, { protocol, ok: result?.ok === true, errorBody })
     }
 
     if (!result?.ok || isIncompleteAssistantMessage(result)) {
-      if (isClientCancelledResult(result)) return finishClientCancel(res, result, logBag)
       const failed = isIncompleteAssistantMessage(result) ? incompleteAssistantClientError(result) : result
-      const mapped = mapProtocolClientError(failed, logBag, failed?.body?.error?.code || 'upstream_error')
+      const mapped = mapProtocolClientError(failed, logBag, failed?.body?.error?.code || 'upstream_error', false)
       if (mapped.body?.error?.code !== 'client_cancelled') stats.errors++
       return sendMapped(res, mapped)
     }
 
     let output
-    const clientBody = hidePersonaUsageOnMessage(result.body, personaHideTokens, cacheTtl)
+    observeRaw(rawState.candidate, 'derived', 'assembled_message', result.body)
+    const clientBody = chatPreserve ? result.body : hidePersonaUsageOnMessage(result.body, personaHideTokens, cacheTtl)
     if (protocol === 'anthropic.messages') {
       output = { ...clientBody }
       if (String(req.headers['x-kin-debug'] || '') === '1') {

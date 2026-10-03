@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "id": "cc-fixed-v186-r1",
+  "status": "owner_approved",
+  "production_approved": true,
+  "dataplane": "cc-fixed",
+  "kernel_policy": "shared_upstream",
+  "approval_scope": "cli_only",
+  "approval": {
+    "date": "2026-09-30",
+    "basis": "owner requested refreshed native cache behavior while retaining fixed system preservation; prior authorization permits local verification before normal use",
+    "scope": "local extracted-source and packaging checks; no new Linux/provider runtime capture"
+  },
+  "lineage": {
+    "source_file": "share/cc-fixed/v155-r3/cc-node",
+    "source_sha256": "0e9744c49ce5971eafe4e5864cdbcdff77838343ceaba2727f55812a5265e7fd",
+    "upstream_cli_sha256": "10140f71c2f2b59a274b4418d8deeb77189c31c58d3a9e02d87b7afc382f7d80",
+    "cc_preserves_accepted_repairs": true,
+    "original_cc_sha256": "be5eec49a78345dd935e302e88c9d7ad0afbb09a195356d81be1bdea766f3960"
+  },
+  "cache_contract": "node_dual_anchor_v1",
+  "supported_layouts": [
+    "zero",
+    "identity"
+  ],
+  "artifacts": {
+    "cc-node": {
+      "file": "cc-node",
+      "bytes": 27158264,
+      "sha256": "f6e2ff2d0a7095e2d1c6ebb96250725ccc0d5fd46d8c8ce492deedeba9c36196",
+      "unpacked_bytes": 111048832,
+      "unpacked_sha256": "93428c65b87239e11f6dbaa5a9295cc5c4a46d6f6323cf415d8c3493ea2d4f36",
+      "source_packed_sha256": "0e9744c49ce5971eafe4e5864cdbcdff77838343ceaba2727f55812a5265e7fd",
+      "source_unpacked_sha256": "92a701f08ed5c9c633ebc3b9f4873adb93d257a8ae95527651b81eaad03039f9",
+      "validations": {
+        "elf_graph": true,
+        "no_bytecode": true,
+        "unchanged_outside_js_spans": true,
+        "syntax": {
+          "syntax": true,
+          "imports": 749,
+          "exports": 0
+        },
+        "upx_integrity": true,
+        "exact_unpack_roundtrip": true
+      },
+      "patches": [
+        {
+          "id": "native-cache-continuity",
+          "offset": 108488014,
+          "bytes": 4236,
+          "replacement_bytes": 4181,
+          "before_sha256": "f7581daee7554906cbf32624e5a722cd654c28af8736b0db808fbd5fa40db152",
+          "after_sha256": "1e96f37cd486d279d0c94299b4079f9990492f96f10eebb2cbcddf9a749ed0cf"
+        },
+        {
+          "id": "include-system-cache-ttl",
+          "offset": 108529072,
+          "bytes": 282,
+          "replacement_bytes": 217,
+          "before_sha256": "ed3f1437f7b3d471a22926e5af80cccd1f212c9304cf22282a3e59fac5f19b41",
+          "after_sha256": "2fc90713d5ab6ad19a4ee90327edded75f4dac3ac6f88d5aa5217ca2e53f0c70"
+        }
+      ]
+    }
+  },
+  "tools": {
+    "upx": "upx 5.0.1",
+    "bun": "1.3.14"
+  },
+  "patches_sha256": "d9c8018d18178b053eec7452d01d79e4e583c1fde042315bec82a1fdc00abe2b",
+  "semantics_sha256": "c23c35a82af4bbf47f1ddeba8c4125dc41b414090d71a7f84fb1a16fcd568718",
+  "local_validation": {
+    "completed": true,
+    "native_execution": false,
+    "behavior_tests": 61,
+    "test_sha256": "104fcedca619d6c851d37a3fc4ae6d0bf698a5d00e470e1bef6a5aac17a373fc",
+    "scope": "actual extracted source spans and native cache oracle; not ELF/provider execution"
+  },
+  "limitations": [
+    "No Linux ELF/kernel/provider execution",
+    "No guarantee of quota savings, thinking or format compliance",
+    "Stock/non-kin behavior unchanged; only zero/identity native path has caller snapshot guarantee"
+  ]
+}

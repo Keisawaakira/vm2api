@@ -1,4 +1,5 @@
 import http from 'node:http'
+import { observeRaw, observedRawChunks } from '../admin/raw-debug.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
@@ -66,15 +67,17 @@ export function forwardApi({
   proxyUrl = '',
   signal,
   timeoutMs = 300_000,
+  rawSend,
 } = {}) {
   return new Promise((resolve, reject) => {
     const { socketPath, tokenPath } = apiKernelPaths(cfg)
     const token = readToken(tokenPath)
+    const bodyText = typeof body === 'string' ? body : JSON.stringify(body ?? {})
     const envelope = JSON.stringify({
       method,
       url,
       headers,
-      body: typeof body === 'string' ? body : JSON.stringify(body ?? {}),
+      body: bodyText,
       proxy_url: proxyUrl || '',
     })
     const payload = Buffer.from(envelope)
@@ -85,6 +88,7 @@ export function forwardApi({
     if (token) reqHeaders['x-kin-internal-token'] = token
     const started = Date.now()
     const attempt = (left) => {
+      let rawHop
       const req = http.request(
         {
           socketPath,
@@ -106,6 +110,7 @@ export function forwardApi({
       timer.unref?.()
       req.once('close', () => clearTimeout(timer))
       req.once('error', (err) => {
+        observeRaw(rawHop, 'connectError')
         clearTimeout(timer)
         const retryable = err?.code === 'ENOENT' || err?.code === 'ECONNREFUSED'
         if (retryable && left > 0 && !signal?.aborted) {
@@ -114,6 +119,19 @@ export function forwardApi({
         }
         reject(err)
       })
+      if (rawSend) {
+        rawHop = observeRaw(
+          rawSend.collector,
+          'beginHop',
+          'node_api_kernel',
+          {
+            ...rawSend.context,
+            connectAttempt: 16 - left,
+          },
+          bodyText,
+        )
+        rawSend.hop = rawHop
+      }
       req.write(payload)
       req.end()
     }
@@ -121,10 +139,10 @@ export function forwardApi({
   })
 }
 
-export async function readApiJson(stream, limit = MAX_BODY) {
+export async function readApiJson(stream, limit = MAX_BODY, rawHop) {
   const chunks = []
   let size = 0
-  for await (const c of stream) {
+  for await (const c of rawHop ? observedRawChunks(stream, rawHop) : stream) {
     size += c.length
     if (size > limit) throw new Error('api kernel body too large')
     chunks.push(c)

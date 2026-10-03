@@ -6,8 +6,11 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { panelShellLaunch } from '../../src/lib/vm/slot-shell.mjs'
 
-test('claude in the panel shell runs cli-node and points config at .claude', () => {
+test('claude in the panel shell runs cli-node and points config at .claude', {
+  skip: process.platform === 'win32' ? 'Requires POSIX bash/symlink semantics; must not start WSL on Windows' : false,
+}, (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slot-shell-rc-'))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
   const bin = path.join(dir, 'cli-node')
   const decoyDir = path.join(dir, 'decoy')
   const home = path.join(dir, 'home')
@@ -41,7 +44,18 @@ test('claude in the panel shell runs cli-node and points config at .claude', () 
   assert.doesNotMatch(ran.stdout, /DECOY/)
   assert.equal(fs.readlinkSync(path.join(home, '.claude', '.credentials.json')), 'credentials.json')
   assert.equal(fs.readlinkSync(path.join(home, '.claude.json')), '.claude/.claude.json')
-  fs.rmSync(dir, { recursive: true, force: true })
+})
+
+test('panel shell keeps configuration local to the session and quotes the selected original CLI', () => {
+  const { rc, cmd } = panelShellLaunch("/fixture/cli'node")
+  assert.match(rc, /CLAUDE_CONFIG_DIR.*HOME\/\.claude/)
+  assert.match(rc, /unalias claude/)
+  assert.ok(rc.includes("'/fixture/cli'\\''node'"))
+  assert.match(rc, /\.credentials\.json/)
+  assert.equal(cmd[0], '/bin/sh')
+  assert.match(cmd[2], /bash --rcfile/)
+  assert.match(cmd[2], /ENV=\$rc exec sh -i/)
+  assert.doesNotMatch(rc, /--native-messages|cc-node-fixed|cli-node-fixed/)
 })
 
 test('panelShellLaunch rejects a non-absolute cli-node path', () => {

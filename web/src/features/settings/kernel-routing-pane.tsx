@@ -41,7 +41,13 @@ export function KernelRoutingPane(props: {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value='wrap'>{dataplaneLabel('wrap')}</SelectItem>
+              <SelectItem value='wrap-fixed'>
+                {dataplaneLabel('wrap-fixed')}
+              </SelectItem>
               <SelectItem value='cc'>{dataplaneLabel('cc')}</SelectItem>
+              <SelectItem value='cc-fixed'>
+                {dataplaneLabel('cc-fixed')}
+              </SelectItem>
               <SelectItem value='crag'>{dataplaneLabel('crag')}</SelectItem>
             </SelectContent>
           </Select>

@@ -427,7 +427,34 @@ test('finish prices OpenAI-shaped usage from third-party clients', () => {
   assert.equal(sum.total_cost, 2.2)
 })
 
-test('cache breakdown falls back to the default 1h bucket', () => {
+test('Claude thinking suffix is a request parameter, not a model redirect', () => {
+  const store = tmpStore('normal')
+  for (const [requested, upstream, mismatch] of [
+    ['claude-opus-4-6(60000)', 'claude-opus-4-6', 0],
+    ['claude-opus-4-6(10000)', 'claude-opus-4-6', 0],
+    ['claude-opus-4-6(max)', 'claude-opus-4-6', 0],
+    ['claude-opus-4-6(60000)', 'claude-sonnet-4-6', 1],
+    ['claude-opus-4-6(unsupported)', 'claude-opus-4-6', 1],
+    ['unrelated(60000)', 'unrelated', 1],
+    ['claude-opus-4-6(60000)', null, null],
+  ]) {
+    const ctx = store.start(
+      { method: 'POST', headers: {}, socket: {} },
+      { protocol: 'openai.chat', pathName: '/v1/chat/completions' },
+    )
+    const sum = store.finish(ctx, {
+      status: 200,
+      model: requested,
+      requested_model: requested,
+      upstream_model: upstream,
+    })
+    assert.equal(sum.requested_model, requested)
+    assert.equal(sum.upstream_model, upstream)
+    assert.equal(sum.model_mismatch, mismatch, requested)
+  }
+})
+
+test('cache split stays unknown through log storage when upstream omits it', () => {
   const store = tmpStore('normal')
   const ctx = store.start(
     { method: 'POST', headers: {}, socket: {} },
@@ -439,8 +466,14 @@ test('cache breakdown falls back to the default 1h bucket', () => {
     upstream_model: 'claude-sonnet-5',
     usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 9 },
   })
-  assert.equal(sum.cache_creation_5m_tokens, 0)
-  assert.equal(sum.cache_creation_1h_tokens, 9)
+  assert.equal(sum.cache_creation_5m_tokens, null)
+  assert.equal(sum.cache_creation_1h_tokens, null)
+  assert.equal(sum.cache_creation_unclassified_tokens, 9)
+  assert.equal(sum.cache_creation_estimated, true)
+  const row = store.repo.getByRequestId(sum.request_id)
+  assert.equal(row.cache_creation_5m_tokens, null)
+  assert.equal(row.cache_creation_1h_tokens, null)
+  assert.equal(row.cache_creation_estimated, true)
   assert.equal(sum.model_mismatch, 0)
 })
 

@@ -261,6 +261,7 @@ export function LogsPage() {
         format: opts.format,
         limit: String(opts.limit),
       })
+      if (opts.includeRaw && isAdmin) exportQs.set('include_raw', '1')
       // 后端 `_mutedExclude` 分支序：error_class > include_muted > exclude > 服务端默认。
       // 「全部日志」必须带 include_muted=1，否则服务端默认屏蔽仍会吃掉数据。
       if (opts.scope === 'all') {
@@ -291,7 +292,15 @@ export function LogsPage() {
       a.download = `vm2api-logs-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')}.${opts.format}`
       a.click()
       URL.revokeObjectURL(url)
-      if (truncated && Number.isFinite(count) && Number.isFinite(exportTotal)) {
+      if (opts.includeRaw && truncated) {
+        toast.success(
+          `已下载 ${count} 条完整存储记录；不可用 ${res.headers.get('x-kin-export-unavailable') || 0}，过大 ${res.headers.get('x-kin-export-oversized') || 0}，字节/条数限制省略 ${Number(res.headers.get('x-kin-export-byte-limited') || 0) + Number(res.headers.get('x-kin-export-row-limited') || 0)}`
+        )
+      } else if (
+        truncated &&
+        Number.isFinite(count) &&
+        Number.isFinite(exportTotal)
+      ) {
         toast.success(
           `已下载 ${count} 条，共匹配 ${exportTotal} 条，超过 ${opts.limit} 已截断`
         )
@@ -530,6 +539,7 @@ export function LogsPage() {
         />
       )}
       <LogDetailSheet
+        isAdmin={isAdmin}
         open={!!openId}
         requestId={openId}
         item={detail.data?.item as RequestLogItem | undefined}
@@ -542,6 +552,7 @@ export function LogsPage() {
         }}
       />
       <ExportDialog
+        isAdmin={isAdmin}
         open={exportOpen}
         onOpenChange={setExportOpen}
         currentSummary={currentSummary}

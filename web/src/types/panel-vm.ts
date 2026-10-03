@@ -71,6 +71,13 @@ export type VmKernelHealth = {
   vm_id?: string | null
 }
 export type VmKernelSnapshot = {
+  cc_native_trace?: {
+    enabled?: boolean
+    raw_enabled?: boolean
+    configured: boolean
+    state: string
+    processes?: Array<{ pid: number; last_ticket_status?: string | null }>
+  } | null
   credential_owner?: string | null
   credential_state?: string | null
   proxy_state?: string | null
@@ -211,8 +218,8 @@ export type Vm = {
   resolved_inference_engine?: 'go' | 'rust' | null
   persona_preset?: string | null
   resolved_persona_preset?: string | null
-  dataplane?: 'wrap' | 'cc' | 'crag' | null
-  resolved_dataplane?: 'wrap' | 'cc' | 'crag' | null
+  dataplane?: 'wrap' | 'wrap-fixed' | 'cc' | 'cc-fixed' | 'crag' | null
+  resolved_dataplane?: 'wrap' | 'wrap-fixed' | 'cc' | 'cc-fixed' | 'crag' | null
   kernel?: string
   region?: string
   /** 槽位环境时区（容器 `TZ` + persona `# Environment`）。 */
@@ -418,6 +425,28 @@ export type OfficialCcStatus = {
   step?: string
   hello_ok?: boolean
   usage_ok?: boolean
+  usage_attempts?: number
+  usage_http_status?: number | null
+  usage_diagnostics?: {
+    source: string
+    code: string
+    message: string
+    cli_exit_code: number | null
+    http_status?: number | null
+    stdout_available: boolean
+    stderr_available: boolean
+    stdout_bytes: number
+    stderr_bytes: number
+    truncated: boolean
+    file_truncated?: boolean
+    limits_present: boolean
+    stdout_text?: string | null
+    stdout_text_chars?: number
+    stdout_text_truncated?: boolean
+    stdout_excerpt_truncated?: boolean
+    stdout_excerpt?: string | null
+    stderr_excerpt?: string | null
+  }
   account_tier?: string
   /** `profile` = 官方 /api/oauth/profile；`usage` = /usage 推断兜底。 */
   account_tier_source?: string

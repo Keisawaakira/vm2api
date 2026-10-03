@@ -1,0 +1,306 @@
+{
+  "version": 1,
+  "id": "cc-fixed-v194-r1",
+  "status": "owner_approved",
+  "production_approved": true,
+  "dataplane": "cc-fixed",
+  "kernel_policy": "shared_upstream",
+  "approval_scope": "cli_only",
+  "approval": {
+    "date": "2026-10-03",
+    "basis": "owner-authorized locally verified fixed CLI maintenance",
+    "scope": "CLI only; not full Linux ELF/provider certification"
+  },
+  "lineage": {
+    "source_file": "share/cc-fixed/v191-r1/cc-node",
+    "source_sha256": "dd9d357f256e0ba87468d0a2915a4984d5d7f85f9ad135636b2de82f0e5c7fe3",
+    "upstream_cli_sha256": "c711a9660d59fd1833e207a34782331f3b65d5d7a0f644880bb26e77e15d7ff1",
+    "original_cc_sha256": "be5eec49a78345dd935e302e88c9d7ad0afbb09a195356d81be1bdea766f3960",
+    "previous_release": "cc-fixed-v191-r1",
+    "classifier_reference_commit": "1b735bf"
+  },
+  "cache_contract": "node_dual_anchor_v1",
+  "supported_layouts": [
+    "zero",
+    "identity"
+  ],
+  "artifacts": {
+    "cc-node": {
+      "file": "cc-node",
+      "bytes": 27160936,
+      "sha256": "ac6d4848435708eb00555308daa37bf437d40596ef99427ec417e93bc8daec8b",
+      "unpacked_bytes": 111048832,
+      "unpacked_sha256": "158ad607b58cc819ee5cd3527100396aa0ed3e7e1b1920b89b951ab4c5768433",
+      "source_packed_sha256": "dd9d357f256e0ba87468d0a2915a4984d5d7f85f9ad135636b2de82f0e5c7fe3",
+      "source_unpacked_sha256": "bd5e1aa06b215697aaaafb5490e3ba48569fb57deba3a84c6e1c242edb0ee5db",
+      "validations": {
+        "elf_graph": true,
+        "no_bytecode": true,
+        "unchanged_outside_js_spans": true,
+        "syntax": {
+          "syntax": true,
+          "imports": 759,
+          "exports": 0
+        },
+        "upx_integrity": true,
+        "exact_unpack_roundtrip": true
+      },
+      "patches": [
+        {
+          "id": "classifier-native-error-metadata",
+          "offset": 98853389,
+          "bytes": 3997,
+          "replacement_bytes": 3918,
+          "before_sha256": "0c284ce8db360f03766992cd97dc0baacef3934b09b71b41cb5a1715d02c8d77",
+          "after_sha256": "b14ea7fca71342af4350dfa0f9a9bfbafac3978c4e2e380048f579624350e338"
+        },
+        {
+          "id": "classifier-caller-snapshot-bridge",
+          "offset": 108508497,
+          "bytes": 1275,
+          "replacement_bytes": 1093,
+          "before_sha256": "d07a4c8696d03f5ef4ca21d213ff88ed1558ed7b8dad963d6c75257fbca6cb60",
+          "after_sha256": "6f09c3e0038190f4c2226368e533516cf68df60d6b6276404df4811b9abfe49e"
+        },
+        {
+          "id": "classifier-non-agentic-query",
+          "offset": 108514737,
+          "bytes": 315,
+          "replacement_bytes": 314,
+          "before_sha256": "5080dad2b0d2174c41cbab59ebf5e1e2148d6a6d66df4dcac96995d37ee98384",
+          "after_sha256": "1a97402262816575cc4a4c3baa3b138cd74afbea0f3cb50f45c50dc44d3e31ad"
+        },
+        {
+          "id": "classifier-safe-caller-system",
+          "offset": 108520509,
+          "bytes": 2074,
+          "replacement_bytes": 1924,
+          "before_sha256": "2f125505aa6f38ba9afa48374168052843b1df3f1ec8a9a63ef02adf33088664",
+          "after_sha256": "c1510a269919a08db7147b8e5d785042f1277f753637b22057fc56e434b07d35"
+        },
+        {
+          "id": "classifier-explicit-effort",
+          "offset": 108525267,
+          "bytes": 295,
+          "replacement_bytes": 281,
+          "before_sha256": "e343736d320689d81e47f36785fc4a60cd2656c44db06f284db1310d0a9b12e1",
+          "after_sha256": "16e0f52a33cb48ca5a7cbe7464ef818c9c67823538a067e7a247a5c95aed2b91"
+        },
+        {
+          "id": "classifier-disabled-thinking",
+          "offset": 108526014,
+          "bytes": 1321,
+          "replacement_bytes": 1052,
+          "before_sha256": "ba1d16e20aa99101c6e93572949ef72d195d1fc9f264ea3301b8ae5cc8f19872",
+          "after_sha256": "f8cb80a302d790e3e8d234b13734c18b486cf3846477a3d4fee9e22bec971d17"
+        },
+        {
+          "id": "classifier-no-context-default",
+          "offset": 108527339,
+          "bytes": 243,
+          "replacement_bytes": 243,
+          "before_sha256": "5fde7aaf24d6647ed4dcdcf297c9fe81bec81e442afe8ce78ca705ed4ef4dac0",
+          "after_sha256": "31231a26b8ab84b5092ede229e8c41bcd1d3d2b36b1847f38ba5129e4ad5d8b0"
+        },
+        {
+          "id": "classifier-no-temperature-default",
+          "offset": 108528530,
+          "bytes": 295,
+          "replacement_bytes": 291,
+          "before_sha256": "f8ac5dd04829c0f67068d5cdd85c331a2a3ed1c27b696c3d833978e7cc045105",
+          "after_sha256": "ab46ed28b501852ae0f971951be0846fbe5af58a346764138dfd2f3018acb997"
+        },
+        {
+          "id": "classifier-preserve-cache-anchors",
+          "offset": 108529072,
+          "bytes": 283,
+          "replacement_bytes": 244,
+          "before_sha256": "38f5cb4c146dbe59d742a73b151a820eb759424104a9fe8ac2a9b9a2ac933b8c",
+          "after_sha256": "5d743bbee12bb1105058d64499a6f249dcfe0984ba8d0447a86b888532341eca"
+        },
+        {
+          "id": "classifier-native-context-dispatch",
+          "offset": 108570032,
+          "bytes": 11779,
+          "replacement_bytes": 11737,
+          "before_sha256": "954b6fe25d12595b9b4225d08c8df2a3c4261743469be6fec46dfea10f7744c3",
+          "after_sha256": "9984961cb947592e8b5709570e697bcb772798534866db47308958bf3e9cd6b1"
+        }
+      ]
+    }
+  },
+  "tools": {
+    "upx": "upx 5.0.1",
+    "bun": "1.3.14"
+  },
+  "patches_sha256": "dc40b14079733777d3f395b93bd7ceb710f799b93e8d06de701f3b859096b65a",
+  "semantics_sha256": "993a688f905428189c3f64dde15943074a9e1f0d844c2d10a49eaf258f6885fb",
+  "local_validation": {
+    "completed": true,
+    "native_execution": false,
+    "behavior_tests": 135,
+    "scope": "exact source differential and packaging; no model requests"
+  },
+  "limitations": [
+    "No Linux ELF/kernel/provider execution",
+    "No guarantee of quota savings, thinking or format compliance",
+    "Stock/non-kin behavior unchanged; only zero/identity native path has caller snapshot guarantee"
+  ],
+  "inherited_repairs": [
+    {
+      "id": "native-cache-continuity",
+      "offset": 108488014,
+      "bytes": 4236,
+      "after_sha256": "1e96f37cd486d279d0c94299b4079f9990492f96f10eebb2cbcddf9a749ed0cf",
+      "preserved": true,
+      "previous_after_sha256": "1e96f37cd486d279d0c94299b4079f9990492f96f10eebb2cbcddf9a749ed0cf"
+    },
+    {
+      "id": "include-system-cache-ttl",
+      "offset": 108529072,
+      "bytes": 282,
+      "after_sha256": "9206608eaad2558088996e7ffd63ed7e0dbf630e34c5d5e248f898b23abfaff4",
+      "preserved": false,
+      "previous_after_sha256": "2fc90713d5ab6ad19a4ee90327edded75f4dac3ac6f88d5aa5217ca2e53f0c70",
+      "updated_by": [
+        "classifier-preserve-cache-anchors"
+      ]
+    },
+    {
+      "id": "connect-existing-api-debug-bindings",
+      "offset": 96908227,
+      "bytes": 8548,
+      "after_sha256": "a5455ba9ebef2a57623ba96dedb6fe145c4ba4cb997ce4ebe47728a636a84a26",
+      "preserved": true,
+      "previous_after_sha256": "a5455ba9ebef2a57623ba96dedb6fe145c4ba4cb997ce4ebe47728a636a84a26"
+    },
+    {
+      "id": "connect-existing-workload-context",
+      "offset": 96982222,
+      "bytes": 2528,
+      "after_sha256": "e744af64e1f04c513f0f14ef487dc58c931ff3f4826d5758b5a0428aa242691e",
+      "preserved": true,
+      "previous_after_sha256": "e744af64e1f04c513f0f14ef487dc58c931ff3f4826d5758b5a0428aa242691e"
+    },
+    {
+      "id": "snapshot-caller-system",
+      "offset": 108508497,
+      "bytes": 1274,
+      "after_sha256": "090cdd51a1ed2a723a98dd8fc43a7b542ee5a6de85bd02c207f8225f42e78346",
+      "previous_after_sha256": "0ec042ec259d5ca0552134efdbfe2ee82a72b146e05d9b87f6cd921da562d67d",
+      "preserved": false,
+      "reason": "bridge now also forwards onError; caller snapshot checked semantically",
+      "updated_by": [
+        "classifier-caller-snapshot-bridge"
+      ]
+    },
+    {
+      "id": "preserve-caller-api-blocks",
+      "offset": 108520509,
+      "bytes": 2072,
+      "after_sha256": "86098424c02fadbc606f8f248fd2db1d7a6543582593d19b974dd392ce33873c",
+      "preserved": false,
+      "previous_after_sha256": "94e6a344ec20c2b8139183e18fa6ed486908f3b2eb51829bd7abc989f908b945",
+      "updated_by": [
+        "classifier-safe-caller-system"
+      ]
+    },
+    {
+      "id": "preserve-crag-api-error-detail",
+      "offset": 108588034,
+      "bytes": 2149,
+      "after_sha256": "7efee0ef910656a37f2d11e6e7e09bd60a2b269d5604faed192e8ae9769a796c",
+      "preserved": true,
+      "previous_after_sha256": "7efee0ef910656a37f2d11e6e7e09bd60a2b269d5604faed192e8ae9769a796c"
+    },
+    {
+      "id": "cc-loop-initialization",
+      "offset": 111000022,
+      "bytes": 3620,
+      "after_sha256": "ea6bee1b63e4053a5426cb237531a55cc7d32f7d6345340032ec2eed6757525d",
+      "preserved": true,
+      "previous_after_sha256": "ea6bee1b63e4053a5426cb237531a55cc7d32f7d6345340032ec2eed6757525d"
+    },
+    {
+      "id": "native-max-tokens-terminal",
+      "offset": 108544372,
+      "bytes": 554,
+      "replacement_bytes": 433,
+      "before_sha256": "a8f05740be00f77198a0f0c6eb6d8b1652e0dafeab44ae3204966c3e145b8334",
+      "after_sha256": "48616d98e0b54f583d7cf74dcbaa652839206b59297b9ab5214b71ebd25185ab",
+      "preserved": true,
+      "previous_after_sha256": "48616d98e0b54f583d7cf74dcbaa652839206b59297b9ab5214b71ebd25185ab"
+    },
+    {
+      "id": "native-no-hidden-retry",
+      "offset": 98838135,
+      "bytes": 19251,
+      "replacement_bytes": 19005,
+      "before_sha256": "fe979f9a2d6e74702db35972e5bf561d3b429c2e9bf7ba0ba24d6083d8cbeff6",
+      "after_sha256": "bf1f0aa5a08a510300858d0c58cd1e503d9e6d67b7da11183c11f16d131bf736",
+      "previous_after_sha256": "831bd0281dc7e289e7005d076f7497b2cc54933651a269d2f8daee4d8c164108",
+      "preserved": false,
+      "updated_by": [
+        "classifier-native-error-metadata"
+      ]
+    },
+    {
+      "id": "native-error-callback-bridge",
+      "offset": 108508497,
+      "bytes": 1275,
+      "replacement_bytes": 1015,
+      "before_sha256": "0708ffa305500507566c7e99c1e52f248fad305f4f382cd5649616e0a7a05c30",
+      "after_sha256": "6f09c3e0038190f4c2226368e533516cf68df60d6b6276404df4811b9abfe49e",
+      "previous_after_sha256": "d07a4c8696d03f5ef4ca21d213ff88ed1558ed7b8dad963d6c75257fbca6cb60",
+      "preserved": false,
+      "updated_by": [
+        "classifier-caller-snapshot-bridge"
+      ]
+    },
+    {
+      "id": "native-timeout-kind",
+      "offset": 108545712,
+      "bytes": 580,
+      "replacement_bytes": 543,
+      "before_sha256": "f011a81564f8ab4ef0f36f717be12dc6093fee79ee80dd96b58c86b78a527510",
+      "after_sha256": "1bde97b9350285cac41330a32ac610a07e07b819614bb9bfc0df684f5518cb62",
+      "previous_after_sha256": "1bde97b9350285cac41330a32ac610a07e07b819614bb9bfc0df684f5518cb62",
+      "preserved": true
+    },
+    {
+      "id": "native-no-nonstream-fallback",
+      "offset": 108548903,
+      "bytes": 852,
+      "replacement_bytes": 714,
+      "before_sha256": "c87fafe7374eb27590196d72a09cf2f2d65584f9e8b1dc6eca8e73f31bb4c2e8",
+      "after_sha256": "019e34c0eabc83d2bbf8944888a44414dd0e90d12dc08ab91fab483ab85118b9",
+      "previous_after_sha256": "019e34c0eabc83d2bbf8944888a44414dd0e90d12dc08ab91fab483ab85118b9",
+      "preserved": true
+    },
+    {
+      "id": "native-preserve-raw-errors",
+      "offset": 108552001,
+      "bytes": 5283,
+      "replacement_bytes": 4111,
+      "before_sha256": "5d0c4ca7cd8c56325bfd030c6ccb77e4f3d3ed7da6d597b3ed21c9536693ede6",
+      "after_sha256": "ae390e6d453efbad40f80c3949dc537f1e2a57876fc1a87a7b38860c47b213f6",
+      "previous_after_sha256": "ae390e6d453efbad40f80c3949dc537f1e2a57876fc1a87a7b38860c47b213f6",
+      "preserved": true
+    },
+    {
+      "id": "native-cancel-ping-errors",
+      "offset": 108570032,
+      "bytes": 11779,
+      "replacement_bytes": 10461,
+      "before_sha256": "ed47f60826670863d3681be73241bfccdbf5711c28b3cf73eecc89788f25dc78",
+      "after_sha256": "9984961cb947592e8b5709570e697bcb772798534866db47308958bf3e9cd6b1",
+      "previous_after_sha256": "954b6fe25d12595b9b4225d08c8df2a3c4261743469be6fec46dfea10f7744c3",
+      "preserved": false,
+      "updated_by": [
+        "classifier-native-context-dispatch"
+      ]
+    }
+  ],
+  "native_lifecycle_contract": "nonblocking_cancel_v1",
+  "classifier_contract": "native_request_context_v1"
+}

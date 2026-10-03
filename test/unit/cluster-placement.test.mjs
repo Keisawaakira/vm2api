@@ -129,7 +129,9 @@ function localSlot(cred) {
 
 const vm = { id: 'vm-07', node_id: 'node-t' }
 
-test('start reconcile never overwrites a remote credential the slot already rotated', async () => {
+test('start reconcile preserves the readonly local seal while keeping remote authority', {
+  skip: process.platform === 'win32' ? 'Windows cannot atomically rename over a readonly target' : false,
+}, async () => {
   const node = fakeNode()
   node.files.set(node.remoteCred, Buffer.from('{"rt":"rotated"}'))
   const slotDir = localSlot('{"rt":"stale"}')
@@ -139,6 +141,21 @@ test('start reconcile never overwrites a remote credential the slot already rota
   const local = path.join(slotDir, 'cli-home', '.claude', 'credentials.json')
   assert.equal(fs.readFileSync(local, 'utf8'), '{"rt":"rotated"}')
   assert.equal(fs.statSync(local).mode & 0o777, 0o444, 'local seal survives the pull')
+})
+
+test('rotated remote credential stays authoritative with a replaceable local mirror', async (t) => {
+  const node = fakeNode()
+  node.files.set(node.remoteCred, Buffer.from('{"rt":"rotated"}'))
+  const slotDir = localSlot('{"rt":"stale"}')
+  t.after(() => fs.rmSync(path.dirname(slotDir), { recursive: true, force: true }))
+  const local = path.join(slotDir, 'cli-home/.claude/credentials.json')
+  fs.chmodSync(local, 0o600)
+  const mode = fs.statSync(local).mode & 0o777
+  const result = await reconcileSlotCredentials(vm, slotDir, node.session)
+  assert.equal(result.pulled, true)
+  assert.equal(node.files.get(node.remoteCred).toString(), '{"rt":"rotated"}')
+  assert.equal(fs.readFileSync(local, 'utf8'), '{"rt":"rotated"}')
+  assert.equal(fs.statSync(local).mode & 0o777, mode)
 })
 
 test('start reconcile seeds an empty node dir from the local credential', async () => {
@@ -289,7 +306,7 @@ test('tar stream round-trips through system tar with modes intact', async (t) =>
   fs.writeFileSync(tarFile, Buffer.concat(chunks))
   let listing
   try {
-    listing = execFileSync('tar', ['-tvf', tarFile], { encoding: 'utf8' })
+    listing = execFileSync('tar', ['-tvf', 'ctx.tar'], { cwd: dir, encoding: 'utf8' })
   } catch {
     t.skip('tar unavailable')
     return
@@ -298,11 +315,13 @@ test('tar stream round-trips through system tar with modes intact', async (t) =>
   assert.match(listing, /-rwxr-xr-x.* 1000 .*opt\/kin\/blob/)
   const out = path.join(dir, 'x')
   fs.mkdirSync(out)
-  execFileSync('tar', ['-xf', tarFile, '-C', out])
+  execFileSync('tar', ['-xf', 'ctx.tar', '-C', 'x'], { cwd: dir })
   assert.ok(fs.readFileSync(path.join(out, 'opt/kin/blob')).equals(fs.readFileSync(src)))
 })
 
-test('socket relay resolves the remote path lazily and reaches a unix socket over streamlocal', async (t) => {
+test('socket relay resolves the remote path lazily and reaches a unix socket over streamlocal', {
+  skip: process.platform === 'win32' ? 'Unix socket file paths require POSIX' : false,
+}, async (t) => {
   const hostKey = utils.generateKeyPairSync('ed25519')
   const asked = []
   const server = new Server({ hostKeys: [hostKey.private] }, (conn) => {

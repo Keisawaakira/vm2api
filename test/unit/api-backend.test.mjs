@@ -6,9 +6,13 @@ import os from 'node:os'
 import path from 'node:path'
 import { createHandleProtocol } from '../../src/lib/protocol/handle-protocol.mjs'
 import { StickyRouter } from '../../src/lib/pool/sticky-router.mjs'
+import { createDatabase } from '../../src/lib/db/database.mjs'
 import { CRS_OFFICIAL_AGENT_PROMPT } from '../../src/lib/identity/crs-persona.mjs'
 import { DEFAULT_AGENT_STANDING } from '../../src/lib/identity/persona-template.mjs'
 import { resolveInferenceBackend, messagesUrl } from '../../src/lib/pool/api-protocol.mjs'
+
+// This transport fixture uses filesystem Unix sockets, not Windows named pipes.
+const unixOnly = { skip: process.platform === 'win32' }
 
 function fakeResponse() {
   return { headersSent: false, on() {}, once() {}, off() {}, write() {}, end() {} }
@@ -37,7 +41,7 @@ test('messagesUrl appends /v1/messages?beta=true', () => {
   assert.equal(messagesUrl('https://api.example.com/'), 'https://api.example.com/v1/messages?beta=true')
 })
 
-test('API backend applies the global official_full persona setting', async () => {
+test('API backend applies the global official_full persona setting', unixOnly, async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-api-persona-'))
   const routingFile = path.join(root, 'routing.json')
   const socketPath = path.join(root, 'run', 'api-kernel.sock')
@@ -494,7 +498,9 @@ function sessionBody(userId, extra = {}) {
 
 function realStickyRouter() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-identity-sticky-'))
-  return { dir, router: new StickyRouter({ dataDir: dir, config: { sticky: { enabled: true, ttl_seconds: 600 } } }) }
+  // Own the SQLite connection so Windows can remove the fixture after assertions.
+  const db = createDatabase({ dataDir: dir })
+  return { dir, router: new StickyRouter({ db, config: { sticky: { enabled: true, ttl_seconds: 600 } } }) }
 }
 
 test('inbound session and device keys match across API keys at the protocol entry', async () => {
@@ -518,6 +524,7 @@ test('inbound session and device keys match across API keys at the protocol entr
       }
     }
   } finally {
+    router.db.close()
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
@@ -539,6 +546,7 @@ test('shared API key keeps different devices apart at the protocol entry', async
     assert.notEqual(a.stickyKey, b.stickyKey)
     assert.notEqual(a.deviceKey, b.deviceKey)
   } finally {
+    router.db.close()
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
@@ -555,6 +563,7 @@ test('explicit body device_id is the fallback when metadata has no device', asyn
     assert.equal(opts.stickyDeviceId, 'dev-explicit')
     assert.equal(opts.deviceKey, 'dev2:dev-explicit')
   } finally {
+    router.db.close()
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
@@ -589,6 +598,7 @@ test('legacy API-key-scoped session row migrates lazily at the protocol entry', 
     assert.equal(other.stickyKey, 'sess:sess-legacy')
     assert.deepEqual(other.stickyKeys, ['sess:sess-legacy'])
   } finally {
+    router.db.close()
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
@@ -613,6 +623,7 @@ test('parent and child family key is shared across API keys and inherits a live 
     assert.equal(child.familyVmId, 'vm-fam')
     assert.notEqual(child.stickyKey, parent.stickyKey)
   } finally {
+    router.db.close()
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
@@ -657,6 +668,7 @@ test('Claude Code sub-agent hops run as child sessions of the main session', asy
       assert.equal(child.deviceKey, main.deviceKey)
     }
   } finally {
+    router.db.close()
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
@@ -674,6 +686,7 @@ test('request without trusted session id keeps the legacy scoped sticky key', as
     assert.match(String(opts.stickyKey), /^p:anthropic:kkey-anon:ch:/)
     assert.equal(opts.deviceKey, null)
   } finally {
+    router.db.close()
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
@@ -702,6 +715,7 @@ test('one-shot test call skips the session seat but keeps its sticky key', async
     })
     assert.equal(turn.skipSessionSeat, false)
   } finally {
+    router.db.close()
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })

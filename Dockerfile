@@ -1,4 +1,5 @@
-# Control plane. linux amd64 bins, wrap-cli ELFs, and web/dist ship in git. The image does not compile the console.
+# Control plane. linux amd64 bins, wrap-cli ELFs, and the rebuilt fork web/dist ship in git.
+# The image does not compile the console; rebuild web/dist when changing frontend source.
 
 FROM node:22-bookworm-slim
 RUN apt-get update \
@@ -15,6 +16,13 @@ COPY docker/kin-os ./docker/kin-os
 COPY web/dist ./web/dist
 COPY bin/kin-kernel bin/kin-egress bin/kin-worker bin/kin-codex-kernel bin/kin-oauth-auth /opt/vm2api/image-bin/
 COPY share/wrap-cli /opt/vm2api/image-wrap-cli
+# Offline explicit crag probes can use this immutable asset without installing it into real slots.
+COPY share/crag/kin-kernel /opt/vm2api/image-crag/kin-kernel
+# Candidate CLIs are diagnostic assets only. No entrypoint/runtime installer copies them to production slots.
+COPY share/offline-candidates /opt/vm2api/image-offline-candidates
+# Repaired CLIs remain separate; their runtime kernel uses the ordinary native source.
+COPY share/wrap-fixed /opt/vm2api/image-wrap-fixed
+COPY share/cc-fixed /opt/vm2api/image-cc-fixed
 COPY scripts/docker-entrypoint.sh /usr/local/bin/vm2api-entrypoint
 RUN chmod 755 /usr/local/bin/vm2api-entrypoint /opt/vm2api/image-bin/* \
   && rm -f /opt/vm2api/src/lib/oauth/auth.js \

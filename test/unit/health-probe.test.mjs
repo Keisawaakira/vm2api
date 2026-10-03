@@ -274,7 +274,7 @@ test('replay cached Messages and chat.completions without synthesizing msg_healt
   assert.equal(chat.object, 'chat.completion')
   assert.equal(chat.choices[0].message.content, 'hello from cache')
   assert.equal(chat.usage.total_tokens, 18)
-  assert.match(chat.id, /^chatcmpl-msg_01CachedHelloFromProbe$/)
+  assert.equal(chat.id, 'msg_01CachedHelloFromProbe')
   assert.equal(synthesizeProtocolResponse('anthropic.messages', hiBody, { text: 'ok' }), null)
 })
 
@@ -288,7 +288,8 @@ test('SSE Messages and chat.completions include the cached id and text', () => {
   const chat = formatHealthSse('openai.chat', hiBody, snap)
   assert.match(chat, /chat.completion.chunk/)
   assert.match(chat, /\[DONE\]/)
-  assert.match(chat, /chatcmpl-msg_01CachedHelloFromProbe/)
+  assert.match(chat, /"id":"msg_01CachedHelloFromProbe"/)
+  assert.doesNotMatch(chat, /chatcmpl-|msg_health_/)
 })
 
 test('text-only snapshot is not a cache hit', () => {

@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "id": "wrap-fixed-v186-r1",
+  "status": "owner_approved",
+  "production_approved": true,
+  "dataplane": "wrap-fixed",
+  "kernel_policy": "shared_upstream",
+  "approval_scope": "cli_only",
+  "approval": {
+    "date": "2026-09-30",
+    "basis": "owner requested refreshed native cache behavior while retaining fixed system preservation; prior authorization permits local verification before normal use",
+    "scope": "local extracted-source and packaging checks; no new Linux/provider runtime capture"
+  },
+  "lineage": {
+    "source_file": "share/wrap-cli/cli-node",
+    "source_sha256": "10140f71c2f2b59a274b4418d8deeb77189c31c58d3a9e02d87b7afc382f7d80",
+    "upstream_cli_sha256": "10140f71c2f2b59a274b4418d8deeb77189c31c58d3a9e02d87b7afc382f7d80",
+    "cc_preserves_accepted_repairs": false
+  },
+  "cache_contract": "node_dual_anchor_v1",
+  "supported_layouts": [
+    "zero",
+    "identity"
+  ],
+  "artifacts": {
+    "cli-node": {
+      "file": "cli-node",
+      "bytes": 27162796,
+      "sha256": "e7134c6ea73d280c8288e1146428b69ba823e08f5396e90892e0a007614dc52a",
+      "unpacked_bytes": 111138944,
+      "unpacked_sha256": "f938078e96d8e176383978dd8423e5923eeaa5818c8e4d5919b2fe05fae34bee",
+      "source_packed_sha256": "10140f71c2f2b59a274b4418d8deeb77189c31c58d3a9e02d87b7afc382f7d80",
+      "source_unpacked_sha256": "33fa35bc5aa328e8b92650305556660a09807e98b86ccc4dedb5cb6a25288ee3",
+      "validations": {
+        "elf_graph": true,
+        "no_bytecode": true,
+        "unchanged_outside_js_spans": true,
+        "syntax": {
+          "syntax": true,
+          "imports": 750,
+          "exports": 0
+        },
+        "upx_integrity": true,
+        "exact_unpack_roundtrip": true
+      },
+      "patches": [
+        {
+          "id": "snapshot-caller-system",
+          "offset": 108596364,
+          "bytes": 1274,
+          "replacement_bytes": 999,
+          "before_sha256": "ce0ddb2f29b0b2850a95202571ffd74125fc2722c28a5973b8c53b482018c05f",
+          "after_sha256": "55a762b86b5d62c52150ef1cecdd84f2d349360f0bb33fee7b651a7d98ce6054"
+        },
+        {
+          "id": "preserve-caller-api-blocks",
+          "offset": 108608446,
+          "bytes": 2123,
+          "replacement_bytes": 2034,
+          "before_sha256": "00d078e840a3f31868d7198f251e8a3b9d26fe7ce8b377497783bcd3dbb7dc91",
+          "after_sha256": "486a3904b7153ba20169f5b33c32f6404e9482e9614c5db91cbf43ce2f9d6c52"
+        }
+      ]
+    }
+  },
+  "tools": {
+    "upx": "upx 5.0.1",
+    "bun": "1.3.14"
+  },
+  "patches_sha256": "ba53394dc707450b87a081917ecca821417f8a1bb2374f114a568329056824af",
+  "semantics_sha256": "6b7a17bb701ea470522f094ada27ae9559ad951c2322de9ed1fc34cc8d427b04",
+  "local_validation": {
+    "completed": true,
+    "native_execution": false,
+    "behavior_tests": 61,
+    "test_sha256": "104fcedca619d6c851d37a3fc4ae6d0bf698a5d00e470e1bef6a5aac17a373fc",
+    "scope": "actual extracted source spans and native cache oracle; not ELF/provider execution"
+  },
+  "limitations": [
+    "No Linux ELF/kernel/provider execution",
+    "No guarantee of quota savings, thinking or format compliance",
+    "Stock/non-kin behavior unchanged; only zero/identity native path has caller snapshot guarantee"
+  ]
+}

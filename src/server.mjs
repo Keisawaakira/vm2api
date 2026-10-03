@@ -29,6 +29,7 @@ import {
 import { createKernelWatchdog, normalizeKernelWatchdogConfig } from './lib/transport/kernel-watchdog.mjs'
 import { ensureSlotSubscriptionType } from './lib/oauth/oauth-credentials.mjs'
 import { createCliNodeGuard } from './lib/vm/cli-node-guard.mjs'
+import { isCrsMock } from './lib/transport/crs-mock.mjs'
 
 import { createUsageProbeMonitor, normalizeUsageProbeConfig } from './lib/oauth/usage-probe-monitor.mjs'
 import { normalizeOfficialCcConfig } from './lib/oauth/official-cc-bootstrap.mjs'
@@ -75,7 +76,7 @@ import { BackupService } from './lib/admin/backup-service.mjs'
 import { ClusterNodesRepo } from './lib/db/repos/cluster-nodes-repo.mjs'
 import { ClusterManager } from './lib/cluster/cluster-manager.mjs'
 import { createClusterRoutes } from './lib/cluster/cluster-routes.mjs'
-import { bindPlacement } from './lib/cluster/placement.mjs'
+import { bindPlacement, vmNodeId } from './lib/cluster/placement.mjs'
 import { createSlotShell } from './lib/vm/slot-shell.mjs'
 
 import {
@@ -311,6 +312,10 @@ if (routingConfig?.logging) {
     mode: process.env.KIN_REQUEST_LOG_MODE || routingConfig.logging.mode,
     retainDays: routingConfig.logging.retain_days,
     debugRetainDays: routingConfig.logging.debug_retain_days,
+    rawNonstreamDebug: routingConfig.logging.raw_nonstream_debug === true,
+    ccNativeTrace: routingConfig.logging.cc_native_trace === true,
+    offlineKernelProbe: routingConfig.logging.offline_kernel_probe === true,
+    offlineKernelDataplane: routingConfig.logging.offline_kernel_dataplane || 'current',
     maxMb: routingConfig.logging.max_mb,
     mutedErrorClasses: routingConfig.logging.muted_error_classes,
   })
@@ -525,6 +530,10 @@ backupService.onRestored((db) => {
     mode: process.env.KIN_REQUEST_LOG_MODE || routingConfig.logging?.mode,
     retainDays: routingConfig.logging?.retain_days,
     debugRetainDays: routingConfig.logging?.debug_retain_days,
+    rawNonstreamDebug: routingConfig.logging?.raw_nonstream_debug === true,
+    ccNativeTrace: routingConfig.logging?.cc_native_trace === true,
+    offlineKernelProbe: routingConfig.logging?.offline_kernel_probe === true,
+    offlineKernelDataplane: routingConfig.logging?.offline_kernel_dataplane || 'current',
     maxMb: routingConfig.logging?.max_mb,
     mutedErrorClasses: routingConfig.logging?.muted_error_classes,
   })
@@ -817,7 +826,7 @@ if (proxyPool.snapshot().config.ipv6_enabled !== true) {
 const clusterRoutes = createClusterRoutes({ manager: clusterManager, json, readBody, ok: panel.ok })
 const slotShell = createSlotShell({ projectRoot: cfg.paths.project })
 for (const vm of listVms(cfg.paths.project)) {
-  if (isCodexVm(vm)) continue
+  if (isCodexVm(vm) || vmNodeId(vm)) continue
   try {
     ensureSlotSubscriptionType(path.join(cfg.paths.project, 'vms', vm.id, 'cli-home'), vm.claude?.account_tier)
   } catch (error) {
@@ -1010,6 +1019,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && (p === '/v1/messages/count_tokens' || p === '/messages/count_tokens')) {
       return await handleUserCountTokens(req, res, {
+        offlineKernelProbe: requestLog.offlineKernelProbe === true,
         json,
         readBody,
         requireAuth,
@@ -1166,7 +1176,7 @@ server.listen(cfg.port, cfg.host, () => {
     console.warn('[kernel-watchdog] start failed', e?.message || e)
   }
   try {
-    cliNodeGuard?.start?.({ immediate: true })
+    if (!isCrsMock()) cliNodeGuard?.start?.({ immediate: true })
   } catch (e) {
     console.warn('[cli-node-guard] start failed', e?.message || e)
   }

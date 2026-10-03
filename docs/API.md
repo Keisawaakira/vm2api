@@ -86,7 +86,9 @@ curl -sS http://127.0.0.1:8787/v1/messages \
 
 `claude-sonnet-5-5` 不支持原生强制工具调用。Node 沿用 Opus 5.5 策略：`tool_choice=any/tool/required` 转成 `{type:auto}`；指定名称的客户端工具设置 `strict:true`，服务端工具不加该字段。不注入提示词，也不把普通文本伪造成工具调用。**strict 只约束实际工具调用的参数，不保证一定调用或只调用指定工具。** 需要原生强制调用时继续使用支持该能力的模型，例如 `claude-sonnet-5`；其行为不变。
 
-规则覆盖 Messages、Chat Completions、Responses 的出站清洗。`auto` / `none` 保持；不支持的 disabled/enabled thinking 转为 adaptive，保留 display。结构化输出转换保留 `output_config.effort`，已有 `output_config.format` 优先，否则从 `response_format` / `text.format` 合并，cli-hop 与普通出站路径均补齐对象 schema 的 `additionalProperties:false`（不覆盖显式值）。
+该宽松适配用于通用 Messages／Responses 清洗及内部 legacy Chat 转换。`auto` / `none` 保持；不支持的 disabled/enabled thinking 转为 adaptive，保留 display。通用结构化输出转换保留 `output_config.effort`，已有 `output_config.format` 优先，否则从 `response_format` / `text.format` 合并，cli-hop 与普通出站路径均补齐对象 schema 的 `additionalProperties:false`（不覆盖显式值）。
+
+**本 fork 的公开 Claude Chat 路径仍遵守 CPA 合同**：不会把强制工具选择静默改成 `auto`；强制工具会移除 thinking/effort，工具选择本身保留。因此不能据此宣称 Sonnet 5.5 的强制调用已可用，上游仍可能拒绝。Chat 的 `response_format` 仍转为独立 system 指令，原生 `output_config` 不是受支持的 Chat 输入；请用 `reasoning_effort`。调用方 system 块不参与这些兼容改写，详见 [PROTOCOL.md](PROTOCOL.md)。
 
 
 ## Chat Completions
@@ -108,13 +110,18 @@ curl -sS http://127.0.0.1:8787/v1/chat/completions \
 
 | OpenAI | 上游 Messages |
 |--------|----------------|
-| `messages[].role=system\|developer` | 顶层 `system`；完整 official 模板先放 billing + identity + agent_prompt，再把调用方 system 作为末块 append |
+| `messages[].role=system\|developer` | 顶层 `system`；保留 caller 文本、顺序、数量和块边界，不经过 Node persona 清洗 |
 | `tools[].function` | Anthropic `tools[]` |
 | `tool_choice=required` | `{type:any}` |
 | `tool_choice.function` | `{type:tool,name}` |
-| `reasoning_effort` / `reasoning.effort` | `thinking.enabled + budget` |
-| `response_format` | `output_config` |
-| 图片 `image_url` | Anthropic image 块 |
+| `reasoning_effort` / `reasoning.effort` | 4.6+/5：`thinking.adaptive` + `output_config.effort`（`max` 保持 `max`，`display: summarized`）；Haiku / 4.5：`thinking.enabled + budget` |
+| `response_format` | 独立追加的 JSON／JSON schema system 指令，不覆盖 caller 块 |
+| 图片 `image_url` / `file.file_data` data URL | Anthropic image / document 块（含工具结果） |
+| `parallel_tool_calls=false` | `tool_choice.disable_parallel_tool_use=true` |
+| `tool_choice.type=allowed_tools` | 筛选工具并映射 auto/required |
+| `tools[].function.strict` / `parametersJsonSchema` | 保留 strict / 归一化 input_schema |
+
+Chat 默认 `max_tokens=32000`（与 CLIProxy 相同），显式 `max_tokens` 优先于 `max_completion_tokens`；`temperature` 不转发。`reasoning.exclude=true` 或 `include_reasoning=false` 隐藏思考摘要但保留 effort。完整移植范围及 VM 身份/structured output 适配差异见 [PROTOCOL.md](PROTOCOL.md)。
 
 回包：
 
@@ -283,7 +290,7 @@ curl -sS http://127.0.0.1:8787/health
 {"error":{"type":"upstream_error","code":"incomplete_response","message":"Assistant hop ended without visible output or stop_reason"}}
 ```
 
-含义：请求已交给槽内 CLI，既没有明确的错误原因，也没有可见输出（text / tool_use / refusal）或 `stop_reason`。只有 thinking 也算。上一次执行已经结束且尚未向客户端写出时，网关先换到别的空闲 VM 重放，没有空位才回到同一 VM；同一请求在同一 VM 上最多实际执行 3 次（含传输层隐藏重试）。都用完仍不完整，才把这个 502 交回客户端。这一次请求不停调、不写账号冷却，也不因计数重启 CLI。一开始就没有可用账号时，返回 `pool_unavailable`。客户端主动断开是 `client_cancelled`，不是这个错误。诊断钉死在某一个槽时，停在该槽并返回这个错误。
+含义：请求已交给槽内 CLI，既没有明确的错误原因，也没有可见输出（text / tool_use / refusal）或 `stop_reason`。只有 thinking 也算。上一次执行已经结束且尚未向客户端写出时，网关先换到别的空闲 VM 重放，没有空位才回到同一 VM；同一请求在同一 VM 上最多派发 3 次 Node→kernel 请求（含该传输层的隐藏重试）。都用完仍不完整，才把这个 502 交回客户端。这一次请求不停调、不写账号冷却，也不因计数重启 CLI。一开始就没有可用账号时，返回 `pool_unavailable`。客户端主动断开是 `client_cancelled`，不是这个错误。诊断钉死在某一个槽时，停在该槽并返回这个错误。
 
 常见原因与处理：
 
@@ -320,7 +327,8 @@ stateDiagram-v2
 - **realtime（默认）**：第一段业务 SSE 写出后不再换账号。
 - **verified**：收齐 `message_stop` 再给客户端；不完整则继续换号。
 - sticky：同一会话（`x-session-id` 等键）在终态成功后绑槽。绑定是偏好，不是过滤：绑定槽忙（并发、RPM、执行位满、未知 429 短冷却）时，这一轮借用同平台别的空闲合格槽，绑定不动，下一轮仍回原槽；额度 / 凭证 / 暂停等确定失效才把会话连同会话窗口迁走。
-- 重试预算：每个 VM 每请求最多 3 次实际执行；准入竞争失败不算一次执行。`failover.max_total_attempts` / `max_account_switches` 用完后只再尝试本请求还没试过的 VM，直到 `total_retry_deadline_ms`。
+- 重试预算：每个 VM 每请求最多 3 次 Node→kernel 派发；准入竞争失败不算派发。`failover.max_total_attempts` / `max_account_switches` 用完后只再尝试本请求还没试过的 VM，直到 `total_retry_deadline_ms`。
+- fork 将剩余次数通过内部 `maxExecutions` 传到内层，`stream:true/false` 均在额外重试前检查；每跳的 `rust_execution_count` 记录该跳派发尝试，异常也保留计数。这些控制不进入模型请求 JSON。它是上界控制，不等于 kernel 接受了多少 job，更不是 CC 内部的云端 API 次数；后者看真实取证。日志 `attempt_count` 仍是外层尝试次数。
 - 子请求：带显式 `parent_session_id` / `root_session_id` 且父会话在本地已有绑定时，子请求计入父会话的会话窗口，不新占 `max_sessions`；每个并行子请求仍各占一个执行位、并发与 RPM。没有显式父子字段时，同设备的新会话不会被当作子请求。
 - Claude Code 子 agent：请求头带 `x-claude-code-agent-id` 时，按上一条的子请求处理，父会话是 `metadata.user_id.session_id`，子会话 ID 由它和 agent ID 派生。每个 agent 单独排队、单独占执行位，落在父会话同一 VM 的任意空闲执行位，不等父会话当前这一轮。
 - 裸 429（没有 5h/7d 头、没有套餐文案）不按模型名定范围：当前执行单元短暂让位并触发一次 `/usage` 探测，由真实用量决定是否是账号额度。上游文本点名模型的才按模型冷却，每分钟限流按 RPM 短冷却。

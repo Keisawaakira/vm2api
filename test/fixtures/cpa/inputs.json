@@ -1,0 +1,1049 @@
+[
+  {
+    "id": "systems",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"system\",\"content\":\" A\\n\\n\\nB \"},{\"role\":\"developer\",\"content\":[{\"type\":\"text\",\"text\":\" C \",\"cache_control\":{\"type\":\"ephemeral\",\"ttl\":\"1h\"}},{\"type\":\"text\",\"text\":\"\"}]},{\"role\":\"user\",\"content\":\"hi\"}]}"
+  },
+  {
+    "id": "empty-system",
+    "model": "claude-sonnet-4-6",
+    "exception": "Empty string caller system retained as one block",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"system\",\"content\":\"\"},{\"role\":\"user\",\"content\":\"hi\"}]}"
+  },
+  {
+    "id": "tools",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"bare\"}},{\"type\":\"function\",\"function\":{\"name\":\"f\",\"description\":\"\",\"strict\":true,\"parameters\":{\"allOf\":[{\"properties\":{\"q\":{\"type\":\"string\"}},\"required\":[\"q\"]}],\"properties\":{\"x\":{\"type\":\"number\"}}}}}],\"tool_choice\":\"required\",\"parallel_tool_calls\":false}"
+  },
+  {
+    "id": "tool-history",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"assistant\",\"content\":\"before\",\"tool_calls\":[{\"type\":\"function\",\"id\":\"a.bad/字\",\"function\":{\"name\":\"f\",\"arguments\":\"{\\\" a \\\": 1}\"}}]},{\"role\":\"tool\",\"tool_call_id\":\"a.bad/字\",\"content\":\"old\"},{\"role\":\"tool\",\"tool_call_id\":\"a.bad/字\",\"content\":null},{\"role\":\"assistant\",\"content\":\"after\"}]}"
+  },
+  {
+    "id": "stop-[]",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"stop\":[],\"max_tokens\":1,\"top_p\":0.7,\"temperature\":0.2}"
+  },
+  {
+    "id": "stop-[\"a\",\"b\"]",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"stop\":[\"a\",\"b\"],\"max_tokens\":1,\"top_p\":0.7,\"temperature\":0.2}"
+  },
+  {
+    "id": "stop-12",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"stop\":12,\"max_tokens\":1,\"top_p\":0.7,\"temperature\":0.2}"
+  },
+  {
+    "id": "format-7",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"system\",\"content\":\"keep\"},{\"role\":\"user\",\"content\":\"hi\"}],\"response_format\":{\"type\":\"json_object\"}}"
+  },
+  {
+    "id": "format-8",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"system\",\"content\":\"keep\"},{\"role\":\"user\",\"content\":\"hi\"}],\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"name\":\" n \",\"description\":\" d \",\"schema\":{\"type\":\"object\",\"properties\":{\"v\":{\"type\":\"string\"}}}}}}"
+  },
+  {
+    "id": "format-9",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"system\",\"content\":\"keep\"},{\"role\":\"user\",\"content\":\"hi\"}],\"response_format\":{\"type\":\"json_schema\"}}"
+  },
+  {
+    "id": "claude-sonnet-4-6-none",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"none\"}"
+  },
+  {
+    "id": "claude-sonnet-4-6-auto",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"auto\"}"
+  },
+  {
+    "id": "claude-sonnet-4-6-minimal",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"minimal\"}"
+  },
+  {
+    "id": "claude-sonnet-4-6-low",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"low\"}"
+  },
+  {
+    "id": "claude-sonnet-4-6-medium",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"medium\"}"
+  },
+  {
+    "id": "claude-sonnet-4-6-high",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"high\"}"
+  },
+  {
+    "id": "claude-sonnet-4-6-xhigh",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"xhigh\"}"
+  },
+  {
+    "id": "claude-sonnet-4-6-max",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"max\"}"
+  },
+  {
+    "id": "claude-sonnet-4-6-bogus",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"bogus\"}"
+  },
+  {
+    "id": "claude-opus-4-6-none",
+    "model": "claude-opus-4-6",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"none\"}"
+  },
+  {
+    "id": "claude-opus-4-6-auto",
+    "model": "claude-opus-4-6",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"auto\"}"
+  },
+  {
+    "id": "claude-opus-4-6-minimal",
+    "model": "claude-opus-4-6",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"minimal\"}"
+  },
+  {
+    "id": "claude-opus-4-6-low",
+    "model": "claude-opus-4-6",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"low\"}"
+  },
+  {
+    "id": "claude-opus-4-6-medium",
+    "model": "claude-opus-4-6",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"medium\"}"
+  },
+  {
+    "id": "claude-opus-4-6-high",
+    "model": "claude-opus-4-6",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"high\"}"
+  },
+  {
+    "id": "claude-opus-4-6-xhigh",
+    "model": "claude-opus-4-6",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"xhigh\"}"
+  },
+  {
+    "id": "claude-opus-4-6-max",
+    "model": "claude-opus-4-6",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"max\"}"
+  },
+  {
+    "id": "claude-opus-4-6-bogus",
+    "model": "claude-opus-4-6",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"bogus\"}"
+  },
+  {
+    "id": "claude-opus-4-5-none",
+    "model": "claude-opus-4-5",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"none\"}"
+  },
+  {
+    "id": "claude-opus-4-5-auto",
+    "model": "claude-opus-4-5",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"auto\"}"
+  },
+  {
+    "id": "claude-opus-4-5-minimal",
+    "model": "claude-opus-4-5",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"minimal\"}"
+  },
+  {
+    "id": "claude-opus-4-5-low",
+    "model": "claude-opus-4-5",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"low\"}"
+  },
+  {
+    "id": "claude-opus-4-5-medium",
+    "model": "claude-opus-4-5",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"medium\"}"
+  },
+  {
+    "id": "claude-opus-4-5-high",
+    "model": "claude-opus-4-5",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"high\"}"
+  },
+  {
+    "id": "claude-opus-4-5-xhigh",
+    "model": "claude-opus-4-5",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"xhigh\"}"
+  },
+  {
+    "id": "claude-opus-4-5-max",
+    "model": "claude-opus-4-5",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"max\"}"
+  },
+  {
+    "id": "claude-opus-4-5-bogus",
+    "model": "claude-opus-4-5",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"bogus\"}"
+  },
+  {
+    "id": "claude-haiku-4-5-none",
+    "model": "claude-haiku-4-5",
+    "inputRawJSON": "{\"model\":\"claude-haiku-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"none\"}"
+  },
+  {
+    "id": "claude-haiku-4-5-auto",
+    "model": "claude-haiku-4-5",
+    "inputRawJSON": "{\"model\":\"claude-haiku-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"auto\"}"
+  },
+  {
+    "id": "claude-haiku-4-5-minimal",
+    "model": "claude-haiku-4-5",
+    "inputRawJSON": "{\"model\":\"claude-haiku-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"minimal\"}"
+  },
+  {
+    "id": "claude-haiku-4-5-low",
+    "model": "claude-haiku-4-5",
+    "inputRawJSON": "{\"model\":\"claude-haiku-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"low\"}"
+  },
+  {
+    "id": "claude-haiku-4-5-medium",
+    "model": "claude-haiku-4-5",
+    "inputRawJSON": "{\"model\":\"claude-haiku-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"medium\"}"
+  },
+  {
+    "id": "claude-haiku-4-5-high",
+    "model": "claude-haiku-4-5",
+    "inputRawJSON": "{\"model\":\"claude-haiku-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"high\"}"
+  },
+  {
+    "id": "claude-haiku-4-5-xhigh",
+    "model": "claude-haiku-4-5",
+    "inputRawJSON": "{\"model\":\"claude-haiku-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"xhigh\"}"
+  },
+  {
+    "id": "claude-haiku-4-5-max",
+    "model": "claude-haiku-4-5",
+    "inputRawJSON": "{\"model\":\"claude-haiku-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"max\"}"
+  },
+  {
+    "id": "claude-haiku-4-5-bogus",
+    "model": "claude-haiku-4-5",
+    "inputRawJSON": "{\"model\":\"claude-haiku-4-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"bogus\"}"
+  },
+  {
+    "id": "claude-opus-5-5-none",
+    "model": "claude-opus-5-5",
+    "inputRawJSON": "{\"model\":\"claude-opus-5-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"none\"}"
+  },
+  {
+    "id": "claude-opus-5-5-auto",
+    "model": "claude-opus-5-5",
+    "inputRawJSON": "{\"model\":\"claude-opus-5-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"auto\"}"
+  },
+  {
+    "id": "claude-opus-5-5-minimal",
+    "model": "claude-opus-5-5",
+    "inputRawJSON": "{\"model\":\"claude-opus-5-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"minimal\"}"
+  },
+  {
+    "id": "claude-opus-5-5-low",
+    "model": "claude-opus-5-5",
+    "inputRawJSON": "{\"model\":\"claude-opus-5-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"low\"}"
+  },
+  {
+    "id": "claude-opus-5-5-medium",
+    "model": "claude-opus-5-5",
+    "inputRawJSON": "{\"model\":\"claude-opus-5-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"medium\"}"
+  },
+  {
+    "id": "claude-opus-5-5-high",
+    "model": "claude-opus-5-5",
+    "inputRawJSON": "{\"model\":\"claude-opus-5-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"high\"}"
+  },
+  {
+    "id": "claude-opus-5-5-xhigh",
+    "model": "claude-opus-5-5",
+    "inputRawJSON": "{\"model\":\"claude-opus-5-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"xhigh\"}"
+  },
+  {
+    "id": "claude-opus-5-5-max",
+    "model": "claude-opus-5-5",
+    "inputRawJSON": "{\"model\":\"claude-opus-5-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"max\"}"
+  },
+  {
+    "id": "claude-opus-5-5-bogus",
+    "model": "claude-opus-5-5",
+    "inputRawJSON": "{\"model\":\"claude-opus-5-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"bogus\"}"
+  },
+  {
+    "id": "claude-sonnet-5-none",
+    "model": "claude-sonnet-5",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"none\"}"
+  },
+  {
+    "id": "claude-sonnet-5-auto",
+    "model": "claude-sonnet-5",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"auto\"}"
+  },
+  {
+    "id": "claude-sonnet-5-minimal",
+    "model": "claude-sonnet-5",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"minimal\"}"
+  },
+  {
+    "id": "claude-sonnet-5-low",
+    "model": "claude-sonnet-5",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"low\"}"
+  },
+  {
+    "id": "claude-sonnet-5-medium",
+    "model": "claude-sonnet-5",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"medium\"}"
+  },
+  {
+    "id": "claude-sonnet-5-high",
+    "model": "claude-sonnet-5",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"high\"}"
+  },
+  {
+    "id": "claude-sonnet-5-xhigh",
+    "model": "claude-sonnet-5",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"xhigh\"}"
+  },
+  {
+    "id": "claude-sonnet-5-max",
+    "model": "claude-sonnet-5",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"max\"}"
+  },
+  {
+    "id": "claude-sonnet-5-bogus",
+    "model": "claude-sonnet-5",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"bogus\"}"
+  },
+  {
+    "id": "summary-64",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"max\",\"reasoning\":{\"exclude\":true}}"
+  },
+  {
+    "id": "summary-only-65",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning\":{\"exclude\":true}}"
+  },
+  {
+    "id": "summary-66",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"max\",\"reasoning\":{\"summary\":\"none\"}}"
+  },
+  {
+    "id": "summary-only-67",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning\":{\"summary\":\"none\"}}"
+  },
+  {
+    "id": "summary-68",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"max\",\"reasoning\":{\"summary\":null}}"
+  },
+  {
+    "id": "summary-only-69",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning\":{\"summary\":null}}"
+  },
+  {
+    "id": "summary-70",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"max\",\"reasoning\":{\"summary\":\"auto\"}}"
+  },
+  {
+    "id": "summary-only-71",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning\":{\"summary\":\"auto\"}}"
+  },
+  {
+    "id": "summary-72",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"max\",\"reasoning\":{\"enabled\":false}}"
+  },
+  {
+    "id": "summary-only-73",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning\":{\"enabled\":false}}"
+  },
+  {
+    "id": "summary-74",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"max\",\"extra_body\":{\"google\":{\"thinkingConfig\":{\"includeThoughts\":true}}},\"reasoning\":{\"exclude\":true}}"
+  },
+  {
+    "id": "summary-only-75",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"extra_body\":{\"google\":{\"thinkingConfig\":{\"includeThoughts\":true}}},\"reasoning\":{\"exclude\":true}}"
+  },
+  {
+    "id": "summary-76",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"max\",\"include_reasoning\":false}"
+  },
+  {
+    "id": "summary-only-77",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"include_reasoning\":false}"
+  },
+  {
+    "id": "forced-thinking",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"max\",\"tool_choice\":\"required\",\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"f\",\"parameters\":{\"type\":\"object\"}}}]}"
+  },
+  {
+    "id": "response-text",
+    "model": "claude-sonnet-4-6",
+    "events": [
+      {
+        "type": "message_start",
+        "message": {
+          "id": "msg_fixed",
+          "model": "upstream-fixed",
+          "role": "assistant",
+          "content": [],
+          "usage": {
+            "input_tokens": 2,
+            "cache_creation_input_tokens": 3,
+            "cache_read_input_tokens": 4,
+            "output_tokens": 0
+          }
+        }
+      },
+      {
+        "type": "content_block_start",
+        "index": 0,
+        "content_block": {
+          "type": "thinking",
+          "thinking": ""
+        }
+      },
+      {
+        "type": "content_block_delta",
+        "index": 0,
+        "delta": {
+          "type": "thinking_delta",
+          "thinking": "Reason "
+        }
+      },
+      {
+        "type": "content_block_delta",
+        "index": 0,
+        "delta": {
+          "type": "thinking_delta",
+          "thinking": "exact"
+        }
+      },
+      {
+        "type": "content_block_stop",
+        "index": 0
+      },
+      {
+        "type": "content_block_start",
+        "index": 1,
+        "content_block": {
+          "type": "text",
+          "text": ""
+        }
+      },
+      {
+        "type": "content_block_delta",
+        "index": 1,
+        "delta": {
+          "type": "text_delta",
+          "text": "hello"
+        }
+      },
+      {
+        "type": "content_block_stop",
+        "index": 1
+      },
+      {
+        "type": "message_delta",
+        "delta": {
+          "stop_reason": "end_turn"
+        },
+        "usage": {
+          "output_tokens": 7
+        }
+      },
+      {
+        "type": "message_stop"
+      }
+    ]
+  },
+  {
+    "id": "response-tools",
+    "model": "claude-sonnet-4-6",
+    "events": [
+      {
+        "type": "message_start",
+        "message": {
+          "id": "msg_fixed",
+          "model": "upstream-fixed",
+          "role": "assistant",
+          "content": [],
+          "usage": {
+            "input_tokens": 2,
+            "cache_creation_input_tokens": 3,
+            "cache_read_input_tokens": 4,
+            "output_tokens": 0
+          }
+        }
+      },
+      {
+        "type": "content_block_start",
+        "index": 3,
+        "content_block": {
+          "type": "tool_use",
+          "id": "call_fixed",
+          "name": "f",
+          "input": {}
+        }
+      },
+      {
+        "type": "content_block_delta",
+        "index": 8,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": "bad"
+        }
+      },
+      {
+        "type": "content_block_delta",
+        "index": 3,
+        "delta": {
+          "type": "input_json_delta",
+          "partial_json": "{ \"z\" : 1, \"a\":2 }"
+        }
+      },
+      {
+        "type": "content_block_stop",
+        "index": 3
+      },
+      {
+        "type": "content_block_start",
+        "index": 7,
+        "content_block": {
+          "type": "tool_use",
+          "id": "call_empty",
+          "name": "g",
+          "input": {}
+        }
+      },
+      {
+        "type": "content_block_stop",
+        "index": 7
+      },
+      {
+        "type": "message_delta",
+        "delta": {
+          "stop_reason": "tool_use"
+        },
+        "usage": {
+          "output_tokens": 7
+        }
+      },
+      {
+        "type": "message_stop"
+      }
+    ]
+  },
+  {
+    "id": "response-sensitive",
+    "model": "claude-sonnet-4-6",
+    "events": [
+      {
+        "type": "message_start",
+        "message": {
+          "id": "msg_fixed",
+          "model": "upstream-fixed",
+          "role": "assistant",
+          "content": [],
+          "usage": {
+            "input_tokens": 2,
+            "cache_creation_input_tokens": 3,
+            "cache_read_input_tokens": 4,
+            "output_tokens": 0
+          }
+        }
+      },
+      {
+        "type": "message_delta",
+        "delta": {
+          "stop_reason": "sensitive"
+        },
+        "usage": {
+          "output_tokens": 1
+        }
+      },
+      {
+        "type": "message_stop"
+      }
+    ]
+  },
+  {
+    "id": "response-initial",
+    "model": "claude-sonnet-4-6",
+    "events": [
+      {
+        "type": "message_start",
+        "message": {
+          "id": "msg_fixed",
+          "model": "upstream-fixed",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "initial"
+            },
+            {
+              "type": "thinking",
+              "thinking": "thought"
+            }
+          ],
+          "usage": {
+            "input_tokens": 2,
+            "cache_creation_input_tokens": 3,
+            "cache_read_input_tokens": 4,
+            "output_tokens": 0
+          }
+        }
+      },
+      {
+        "type": "message_delta",
+        "delta": {
+          "stop_reason": "end_turn"
+        },
+        "usage": {
+          "output_tokens": 7
+        }
+      },
+      {
+        "type": "message_stop"
+      }
+    ],
+    "exception": "Preserve initial content (CPA drops it)"
+  },
+  {
+    "id": "response-multiple",
+    "model": "claude-sonnet-4-6",
+    "events": [
+      {
+        "type": "message_start",
+        "message": {
+          "id": "msg_fixed",
+          "model": "upstream-fixed",
+          "role": "assistant",
+          "content": [],
+          "usage": {
+            "input_tokens": 2,
+            "cache_creation_input_tokens": 3,
+            "cache_read_input_tokens": 4,
+            "output_tokens": 0
+          }
+        }
+      },
+      {
+        "type": "content_block_start",
+        "index": 0,
+        "content_block": {
+          "type": "thinking",
+          "thinking": ""
+        }
+      },
+      {
+        "type": "content_block_delta",
+        "index": 0,
+        "delta": {
+          "type": "thinking_delta",
+          "thinking": "Reason "
+        }
+      },
+      {
+        "type": "content_block_delta",
+        "index": 0,
+        "delta": {
+          "type": "thinking_delta",
+          "thinking": "exact"
+        }
+      },
+      {
+        "type": "content_block_stop",
+        "index": 0
+      },
+      {
+        "type": "content_block_start",
+        "index": 1,
+        "content_block": {
+          "type": "text",
+          "text": ""
+        }
+      },
+      {
+        "type": "content_block_delta",
+        "index": 1,
+        "delta": {
+          "type": "text_delta",
+          "text": "hello"
+        }
+      },
+      {
+        "type": "content_block_stop",
+        "index": 1
+      },
+      {
+        "type": "message_delta",
+        "delta": {
+          "stop_reason": "end_turn"
+        },
+        "usage": {
+          "output_tokens": 7
+        }
+      },
+      {
+        "type": "message_stop"
+      },
+      {
+        "type": "message_start",
+        "message": {
+          "id": "msg_second",
+          "model": "second-model",
+          "role": "assistant",
+          "content": [],
+          "usage": {
+            "input_tokens": 2,
+            "cache_creation_input_tokens": 3,
+            "cache_read_input_tokens": 4,
+            "output_tokens": 0
+          }
+        }
+      },
+      {
+        "type": "content_block_start",
+        "index": 0,
+        "content_block": {
+          "type": "thinking",
+          "thinking": ""
+        }
+      },
+      {
+        "type": "content_block_delta",
+        "index": 0,
+        "delta": {
+          "type": "thinking_delta",
+          "thinking": "Reason "
+        }
+      },
+      {
+        "type": "content_block_delta",
+        "index": 0,
+        "delta": {
+          "type": "thinking_delta",
+          "thinking": "exact"
+        }
+      },
+      {
+        "type": "content_block_stop",
+        "index": 0
+      },
+      {
+        "type": "content_block_start",
+        "index": 1,
+        "content_block": {
+          "type": "text",
+          "text": ""
+        }
+      },
+      {
+        "type": "content_block_delta",
+        "index": 1,
+        "delta": {
+          "type": "text_delta",
+          "text": "hello"
+        }
+      },
+      {
+        "type": "content_block_stop",
+        "index": 1
+      },
+      {
+        "type": "message_delta",
+        "delta": {
+          "stop_reason": "end_turn"
+        },
+        "usage": {
+          "output_tokens": 7
+        }
+      },
+      {
+        "type": "message_stop"
+      }
+    ],
+    "exception": "Nonstream concatenate; streaming rejects second start after committed terminal"
+  },
+  {
+    "id": "claude-opus-4-5-20251101-none",
+    "model": "claude-opus-4-5-20251101",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-5-20251101\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"none\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-opus-4-5-20251101-auto",
+    "model": "claude-opus-4-5-20251101",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-5-20251101\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"auto\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-opus-4-5-20251101-minimal",
+    "model": "claude-opus-4-5-20251101",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-5-20251101\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"minimal\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-opus-4-5-20251101-high",
+    "model": "claude-opus-4-5-20251101",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-5-20251101\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"high\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-opus-4-5-20251101-max",
+    "model": "claude-opus-4-5-20251101",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-5-20251101\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"max\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-sonnet-4-5-20250929-none",
+    "model": "claude-sonnet-4-5-20250929",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-5-20250929\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"none\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-sonnet-4-5-20250929-auto",
+    "model": "claude-sonnet-4-5-20250929",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-5-20250929\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"auto\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-sonnet-4-5-20250929-minimal",
+    "model": "claude-sonnet-4-5-20250929",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-5-20250929\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"minimal\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-sonnet-4-5-20250929-high",
+    "model": "claude-sonnet-4-5-20250929",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-5-20250929\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"high\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-sonnet-4-5-20250929-max",
+    "model": "claude-sonnet-4-5-20250929",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-5-20250929\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"max\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-haiku-4-5-20251001-none",
+    "model": "claude-haiku-4-5-20251001",
+    "inputRawJSON": "{\"model\":\"claude-haiku-4-5-20251001\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"none\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-haiku-4-5-20251001-auto",
+    "model": "claude-haiku-4-5-20251001",
+    "inputRawJSON": "{\"model\":\"claude-haiku-4-5-20251001\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"auto\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-haiku-4-5-20251001-minimal",
+    "model": "claude-haiku-4-5-20251001",
+    "inputRawJSON": "{\"model\":\"claude-haiku-4-5-20251001\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"minimal\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-haiku-4-5-20251001-high",
+    "model": "claude-haiku-4-5-20251001",
+    "inputRawJSON": "{\"model\":\"claude-haiku-4-5-20251001\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"high\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-haiku-4-5-20251001-max",
+    "model": "claude-haiku-4-5-20251001",
+    "inputRawJSON": "{\"model\":\"claude-haiku-4-5-20251001\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"max\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-sonnet-4-20250514-none",
+    "model": "claude-sonnet-4-20250514",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-20250514\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"none\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-sonnet-4-20250514-auto",
+    "model": "claude-sonnet-4-20250514",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-20250514\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"auto\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-sonnet-4-20250514-minimal",
+    "model": "claude-sonnet-4-20250514",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-20250514\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"minimal\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-sonnet-4-20250514-high",
+    "model": "claude-sonnet-4-20250514",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-20250514\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"high\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-sonnet-4-20250514-max",
+    "model": "claude-sonnet-4-20250514",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-20250514\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"max\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-opus-4-1-20250805-none",
+    "model": "claude-opus-4-1-20250805",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-1-20250805\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"none\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-opus-4-1-20250805-auto",
+    "model": "claude-opus-4-1-20250805",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-1-20250805\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"auto\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-opus-4-1-20250805-minimal",
+    "model": "claude-opus-4-1-20250805",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-1-20250805\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"minimal\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-opus-4-1-20250805-high",
+    "model": "claude-opus-4-1-20250805",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-1-20250805\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"high\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-opus-4-1-20250805-max",
+    "model": "claude-opus-4-1-20250805",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-1-20250805\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"max\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-fable-5-none",
+    "model": "claude-fable-5",
+    "inputRawJSON": "{\"model\":\"claude-fable-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"none\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-fable-5-auto",
+    "model": "claude-fable-5",
+    "inputRawJSON": "{\"model\":\"claude-fable-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"auto\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-fable-5-minimal",
+    "model": "claude-fable-5",
+    "inputRawJSON": "{\"model\":\"claude-fable-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"minimal\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-fable-5-high",
+    "model": "claude-fable-5",
+    "inputRawJSON": "{\"model\":\"claude-fable-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"high\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-fable-5-max",
+    "model": "claude-fable-5",
+    "inputRawJSON": "{\"model\":\"claude-fable-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"max\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-opus-5-none",
+    "model": "claude-opus-5",
+    "inputRawJSON": "{\"model\":\"claude-opus-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"none\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-opus-5-auto",
+    "model": "claude-opus-5",
+    "inputRawJSON": "{\"model\":\"claude-opus-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"auto\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-opus-5-minimal",
+    "model": "claude-opus-5",
+    "inputRawJSON": "{\"model\":\"claude-opus-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"minimal\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-opus-5-high",
+    "model": "claude-opus-5",
+    "inputRawJSON": "{\"model\":\"claude-opus-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"high\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-opus-5-max",
+    "model": "claude-opus-5",
+    "inputRawJSON": "{\"model\":\"claude-opus-5\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"max\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-opus-4-7-none",
+    "model": "claude-opus-4-7",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-7\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"none\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-opus-4-7-auto",
+    "model": "claude-opus-4-7",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-7\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"auto\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-opus-4-7-minimal",
+    "model": "claude-opus-4-7",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-7\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"minimal\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-opus-4-7-high",
+    "model": "claude-opus-4-7",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-7\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"high\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-opus-4-7-max",
+    "model": "claude-opus-4-7",
+    "inputRawJSON": "{\"model\":\"claude-opus-4-7\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"max\",\"max_tokens\":8000}"
+  },
+  {
+    "id": "claude-sonnet-4-6(high)",
+    "model": "claude-sonnet-4-6(high)",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6(high)\",\"reasoning_effort\":\"none\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"
+  },
+  {
+    "id": "claude-sonnet-4-6(8192)",
+    "model": "claude-sonnet-4-6(8192)",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6(8192)\",\"reasoning_effort\":\"none\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"
+  },
+  {
+    "id": "claude-sonnet-4-5-20250929(1024)",
+    "model": "claude-sonnet-4-5-20250929(1024)",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-5-20250929(1024)\",\"reasoning_effort\":\"none\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"
+  },
+  {
+    "id": "suffix-review-sonnet46-minus-one",
+    "model": "claude-sonnet-4-6(-1)",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6(-1)\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"
+  },
+  {
+    "id": "suffix-review-sonnet46-auto",
+    "model": "claude-sonnet-4-6(auto)",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6(auto)\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"
+  },
+  {
+    "id": "suffix-review-sonnet46-minimal",
+    "model": "claude-sonnet-4-6(minimal)",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6(minimal)\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"
+  },
+  {
+    "id": "suffix-review-sonnet46-xhigh",
+    "model": "claude-sonnet-4-6(xhigh)",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6(xhigh)\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"
+  },
+  {
+    "id": "suffix-review-sonnet45-minus-one",
+    "model": "claude-sonnet-4-5-20250929(-1)",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-5-20250929(-1)\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"
+  },
+  {
+    "id": "suffix-review-body-auto-control",
+    "model": "claude-sonnet-4-6",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"auto\"}"
+  },
+  {
+    "id": "suffix-review-valid-high-control",
+    "model": "claude-sonnet-4-6(high)",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6(high)\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"
+  },
+  {
+    "id": "suffix-review-suffix-priority-hidden",
+    "model": "claude-sonnet-4-6(auto)",
+    "inputRawJSON": "{\"model\":\"claude-sonnet-4-6(auto)\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"none\",\"include_reasoning\":false}"
+  },
+  {
+    "id": "suffix-review-dynamic-auto-control",
+    "model": "claude-opus-5(-1)",
+    "inputRawJSON": "{\"model\":\"claude-opus-5(-1)\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"
+  }
+]

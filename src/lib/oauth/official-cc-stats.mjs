@@ -5,6 +5,84 @@
  */
 import { isCompleteOAuthUsage, normUtilization, parseOAuthUsage } from './crs-usage-probe.mjs'
 
+export function sanitizeOfficialCcDiagnostic(value, maxChars = 600) {
+  return String(value || '')
+    .replace(/\u001b\[[0-9;]*[A-Za-z]/g, '')
+    .replace(/sk-ant-[A-Za-z0-9._~+/-]+/g, '[redacted-token]')
+    .replace(/\bBearer\s+[^\s"']+/gi, 'Bearer [redacted]')
+    .replace(/\b((?:https?|socks5h?):\/\/)[^\s/@]+@/gi, '$1[redacted]@')
+    .replace(
+      /((?:access_token|refresh_token|api_key|session_key|sessionKey|authorization|cookie)["']?\s*[:=]\s*["']?)[^\s"',;}]+/gi,
+      '$1[redacted]',
+    )
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxChars)
+}
+
+function outputEvents(raw) {
+  if (typeof raw === 'string') {
+    try {
+      return outputEvents(JSON.parse(raw.trim()))
+    } catch {
+      return raw.split('\n').flatMap((line) => {
+        try {
+          return outputEvents(JSON.parse(line))
+        } catch {
+          return []
+        }
+      })
+    }
+  }
+  return (Array.isArray(raw) ? raw : [raw]).filter(
+    (event) => event && typeof event === 'object' && !Array.isArray(event),
+  )
+}
+
+/** Only explicit CLI/API error envelopes count, not words in ordinary model prose. */
+export function officialCcOutputFailure(raw) {
+  for (const event of outputEvents(raw).reverse()) {
+    if (!event || typeof event !== 'object') continue
+    const error = event.usage_report?.error || event.usage_report?.usage_error || event.error
+    const explicit =
+      error ||
+      event.type === 'error' ||
+      event.is_error === true ||
+      event.isApiErrorMessage === true ||
+      /^error/.test(event.subtype || '')
+    if (!explicit) continue
+    const parts = [
+      typeof error === 'string' ? error : error?.message,
+      ...(Array.isArray(event.errors) ? event.errors.filter((v) => typeof v === 'string').slice(0, 4) : []),
+      typeof event.result === 'string' ? event.result : null,
+      typeof event.message === 'string' ? event.message : null,
+      outputText(event),
+    ].filter(Boolean)
+    const code = error?.code || error?.type || event.subtype || 'cli_error'
+    return {
+      code: /^[A-Za-z0-9_.:-]{1,80}$/.test(String(code)) ? String(code) : 'cli_error',
+      message: sanitizeOfficialCcDiagnostic([...new Set(parts)].join('; ') || 'Official CLI reported an error'),
+    }
+  }
+  return null
+}
+
+function outputText(value) {
+  if (!value || typeof value !== 'object' || value.type === 'user' || value.type === 'system') return ''
+  if (typeof value.result === 'string' && value.result.trim()) return value.result
+  if (typeof value.text === 'string' && value.text.trim()) return value.text
+  const content = value.message?.content ?? value.content
+  if (Array.isArray(content))
+    return content
+      .filter((block) => block?.type === 'text' && typeof block.text === 'string')
+      .map((block) => block.text)
+      .join('\n')
+  return ''
+}
+function uniqueOutputText(events) {
+  return [...new Set(events.map(outputText).filter((text) => text.trim()))].join('\n')
+}
+
 export function officialStatsText(raw) {
   if (raw == null) return ''
   if (typeof raw === 'string') {
@@ -13,12 +91,15 @@ export function officialStatsText(raw) {
     try {
       return officialStatsText(JSON.parse(trimmed))
     } catch {
-      return trimmed
+      const events = officialUsageEvents(trimmed)
+      return events ? events.text : trimmed
     }
   }
+  if (Array.isArray(raw)) return uniqueOutputText(raw)
   if (typeof raw === 'object') {
-    if (typeof raw.result === 'string') return raw.result
-    if (typeof raw.text === 'string') return raw.text
+    const text = outputText(raw)
+    if (text) return text
+    if (raw.type || raw.role || typeof raw.result === 'string') return ''
     return JSON.stringify(raw)
   }
   return String(raw)
@@ -73,26 +154,25 @@ export function inferTierFromOfficialStats(text = '', structured = {}) {
 /**
  * `claude -p /usage --output-format stream-json --verbose` prints one JSON
  * event per line. The synthetic assistant event carries `usage_report`
- * (server limits[] verbatim); the final `result` event carries the text.
+ * (server limits[] verbatim); text may live in assistant.message.content, with
+ * an empty or duplicated final result. Empty results never erase that text.
  */
 export function officialUsageEvents(raw) {
-  if (typeof raw !== 'string') return null
-  const lines = raw
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-  if (lines.length < 2) return null
-  const events = []
-  for (const line of lines) {
-    try {
-      const doc = JSON.parse(line)
-      if (doc && typeof doc === 'object') events.push(doc)
-    } catch {}
-  }
-  if (!events.length) return null
+  const events = outputEvents(raw)
+  if (
+    !events.some(
+      (event) =>
+        event.usage_report ||
+        event.message?.content ||
+        Array.isArray(event.content) ||
+        typeof event.result === 'string' ||
+        event.type === 'system',
+    )
+  )
+    return null
   const report = events.map((e) => e.usage_report).find((r) => r && typeof r === 'object') || null
   const result = [...events].reverse().find((e) => e.type === 'result') || null
-  return { report, result }
+  return { report, result, text: uniqueOutputText(events) }
 }
 
 /** Map server limits[] rows onto the /api/oauth/usage window shape. */
@@ -139,10 +219,21 @@ export function usageFromText(text = '') {
 }
 
 export function parseOfficialCcStats(raw) {
+  const failure = officialCcOutputFailure(raw)
+  if (failure)
+    return {
+      ok: false,
+      limits_present: false,
+      account_tier: null,
+      source: 'official-cc-usage-cli',
+      text_len: typeof raw === 'string' ? raw.length : 0,
+      usage_error: failure.message,
+      usage_error_code: failure.code,
+    }
   const events = officialUsageEvents(raw)
   if (events) {
     const fromReport = usageFromLimits(events.report?.rate_limits)
-    const base = parseOfficialCcStats(fromReport || events.result || '')
+    const base = parseOfficialCcStats(fromReport || events.text || '')
     // null limits = the CLI answered from a cached/seeded read without the
     // server rows; that is where Max accounts lose the Fable window.
     return { ...base, limits_present: base.limits_present === true }

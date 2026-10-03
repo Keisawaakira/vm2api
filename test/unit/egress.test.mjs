@@ -1,5 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import childProcess from 'node:child_process'
+import { syncBuiltinESMExports } from 'node:module'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -225,25 +227,77 @@ test('DNS upstream validation rejects unsafe or malformed URL boundaries', () =>
   }
 })
 
-test('egress config carries dns_upstream only when configured', () => {
+test('egress config carries dns_upstream only when configured', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'egress-dns-'))
+  // Verify actual config serialization without requiring /bin/true or starting a process.
+  const calls = []
+  const spawn = t.mock.method(childProcess, 'spawn', (bin, args) => {
+    calls.push({ bin, args })
+    return { pid: 1000000 + calls.length, unref() {} }
+  })
+  syncBuiltinESMExports()
+  t.after(() => {
+    spawn.mock.restore()
+    syncBuiltinESMExports()
+    fs.rmSync(root, { recursive: true, force: true })
+  })
   const base = {
     projectRoot: root,
     proxyUrl: 'socks5h://127.0.0.1:1',
     tcpPort: 20000,
     dnsPort: 20001,
     listenHost: '127.0.0.1',
-    bin: '/bin/true',
+    bin: process.execPath,
   }
   const a = startEgressProcess({ ...base, proxyId: 'px-a', dnsUpstream: '' })
   assert.equal(a.ok, true)
   assert.equal(JSON.parse(fs.readFileSync(a.configPath, 'utf8')).dns_upstream, undefined)
   const b = startEgressProcess({ ...base, proxyId: 'px-b', dnsUpstream: '8.8.8.8:53,1.1.1.1:53' })
+  assert.equal(b.ok, true)
   assert.equal(JSON.parse(fs.readFileSync(b.configPath, 'utf8')).dns_upstream, '8.8.8.8:53,1.1.1.1:53')
-  fs.rmSync(root, { recursive: true, force: true })
+  assert.deepEqual(calls, [
+    { bin: process.execPath, args: ['-config', a.configPath] },
+    { bin: process.execPath, args: ['-config', b.configPath] },
+  ])
 })
 
-test('egress readiness checks the exact listener without opening a connection', async (t) => {
+test('passive listener selection does not fall back to an active TCP probe', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'egress-passive-contract-'))
+  const dir = egressRunDir(root, 'px-passive-contract')
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, 'egress.pid'), String(process.pid))
+  const config = path.join(dir, 'egress.json')
+  const calls = []
+  const processMock = t.mock.method(childProcess, 'execFileSync', (bin, args) => {
+    calls.push({ bin, args })
+    return bin === 'ss' ? 'LISTEN 0 4096 127.0.0.1:20501 0.0.0.0:*\n' : ''
+  })
+  const connect = t.mock.method(net, 'connect', () => {
+    throw Error('Active readiness traffic is forbidden')
+  })
+  const create = t.mock.method(net, 'createConnection', () => {
+    throw Error('Active readiness traffic is forbidden')
+  })
+  syncBuiltinESMExports()
+  t.after(() => {
+    processMock.mock.restore()
+    connect.mock.restore()
+    create.mock.restore()
+    syncBuiltinESMExports()
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+  fs.writeFileSync(config, JSON.stringify({ listen_tcp: '127.0.0.1:20501' }))
+  assert.equal(egressListening(root, 'px-passive-contract').ok, true)
+  assert.deepEqual(calls[0], { bin: 'ss', args: ['-H', '-ltn', 'sport = :20501'] })
+  fs.writeFileSync(config, JSON.stringify({ listen_tcp: '127.0.0.2:20501' }))
+  assert.equal(egressListening(root, 'px-passive-contract', 5).reason, 'not_listening')
+  assert.equal(connect.mock.callCount(), 0)
+  assert.equal(create.mock.callCount(), 0)
+})
+
+test('egress readiness checks the exact listener without opening a connection', {
+  skip: process.platform !== 'linux' ? 'Real socket-table integration requires Linux ss' : false,
+}, async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'egress-listen-'))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   let accepted = 0

@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "id": "wrap-fixed-v189-r1",
+  "status": "owner_approved",
+  "production_approved": true,
+  "dataplane": "wrap-fixed",
+  "kernel_policy": "shared_upstream",
+  "approval_scope": "cli_only",
+  "approval": {
+    "date": "2026-10-01",
+    "basis": "owner-authorized fixed CLI maintenance, preserving accepted repairs while integrating the exact upstream native terminal fix",
+    "scope": "local source/packaging verification; not Linux ELF/provider execution"
+  },
+  "lineage": {
+    "source_file": "share/wrap-fixed/v186-r1/cli-node",
+    "source_sha256": "e7134c6ea73d280c8288e1146428b69ba823e08f5396e90892e0a007614dc52a",
+    "upstream_cli_sha256": "75a1a7b939553a5deeea98075359a87a2d4132535f71e29ef88df291e79ea55d",
+    "cc_preserves_accepted_repairs": false,
+    "previous_release": "wrap-fixed-v186-r1",
+    "terminal_reference_commit": "259dbbdc79aa85158a29f3fbf5df372d66fd2577"
+  },
+  "cache_contract": "node_dual_anchor_v1",
+  "supported_layouts": [
+    "zero",
+    "identity"
+  ],
+  "artifacts": {
+    "cli-node": {
+      "file": "cli-node",
+      "bytes": 27162836,
+      "sha256": "8b281f2388360c3252e69465a6f8ba261600a18229a7b4f1b60eb8b3be1a6396",
+      "unpacked_bytes": 111138944,
+      "unpacked_sha256": "adc62d970b24b2f02494f3e7e56f0def0c8d883aaa9f73914623b065d6c95894",
+      "source_packed_sha256": "e7134c6ea73d280c8288e1146428b69ba823e08f5396e90892e0a007614dc52a",
+      "source_unpacked_sha256": "f938078e96d8e176383978dd8423e5923eeaa5818c8e4d5919b2fe05fae34bee",
+      "validations": {
+        "elf_graph": true,
+        "no_bytecode": true,
+        "unchanged_outside_js_spans": true,
+        "syntax": {
+          "syntax": true,
+          "imports": 750,
+          "exports": 0
+        },
+        "upx_integrity": true,
+        "exact_unpack_roundtrip": true
+      },
+      "patches": [
+        {
+          "id": "native-max-tokens-terminal",
+          "offset": 108632476,
+          "bytes": 554,
+          "replacement_bytes": 433,
+          "before_sha256": "a8f05740be00f77198a0f0c6eb6d8b1652e0dafeab44ae3204966c3e145b8334",
+          "after_sha256": "48616d98e0b54f583d7cf74dcbaa652839206b59297b9ab5214b71ebd25185ab"
+        }
+      ]
+    }
+  },
+  "tools": {
+    "upx": "upx 5.0.1",
+    "bun": "1.3.14"
+  },
+  "patches_sha256": "470ac7bc1c8454185f93342247564a49a76b78dcd0890a80d8d02d8f40c232da",
+  "semantics_sha256": "ccea179eecd77e6f0d5915974cce1051e5c8a25bacc548cb52b8e686af5bce22",
+  "local_validation": {
+    "completed": true,
+    "native_execution": false,
+    "behavior_tests": 24,
+    "scope": "exact native terminal fragment versus upstream; inherited repair bytes and complete ELF/package checks"
+  },
+  "limitations": [
+    "No Linux ELF/kernel/provider execution",
+    "No guarantee of quota savings, thinking or format compliance",
+    "Stock/non-kin behavior unchanged; only zero/identity native path has caller snapshot guarantee"
+  ],
+  "inherited_repairs": [
+    {
+      "id": "snapshot-caller-system",
+      "offset": 108596364,
+      "bytes": 1274,
+      "after_sha256": "55a762b86b5d62c52150ef1cecdd84f2d349360f0bb33fee7b651a7d98ce6054"
+    },
+    {
+      "id": "preserve-caller-api-blocks",
+      "offset": 108608446,
+      "bytes": 2123,
+      "after_sha256": "486a3904b7153ba20169f5b33c32f6404e9482e9614c5db91cbf43ce2f9d6c52"
+    }
+  ]
+}

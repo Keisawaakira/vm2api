@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "id": "wrap-fixed-v191-r1",
+  "status": "owner_approved",
+  "production_approved": true,
+  "dataplane": "wrap-fixed",
+  "kernel_policy": "shared_upstream",
+  "approval_scope": "cli_only",
+  "approval": {
+    "date": "2026-10-02",
+    "basis": "owner-authorized locally verified fixed CLI maintenance alongside upstream",
+    "scope": "source/packaging checks, not Linux ELF or provider certification"
+  },
+  "lineage": {
+    "source_file": "share/wrap-cli/cli-node",
+    "source_sha256": "a32241fb000f9696f846efcc32ab72d07714465edbc16fe914b33f62d65c83cc",
+    "upstream_cli_sha256": "a32241fb000f9696f846efcc32ab72d07714465edbc16fe914b33f62d65c83cc",
+    "original_cc_sha256": "be5eec49a78345dd935e302e88c9d7ad0afbb09a195356d81be1bdea766f3960",
+    "previous_release": "wrap-fixed-v189-r1",
+    "lifecycle_reference_commit": "011a838"
+  },
+  "cache_contract": "node_dual_anchor_v1",
+  "supported_layouts": [
+    "zero",
+    "identity"
+  ],
+  "artifacts": {
+    "cli-node": {
+      "file": "cli-node",
+      "bytes": 27164192,
+      "sha256": "038013fa60e879c72dc81e791061b42244770d9aaa5247d855507a827d75ec50",
+      "unpacked_bytes": 111147136,
+      "unpacked_sha256": "ff0fda134dfe38da740f55e8f686837d33e634a5391d19ba5e2eb7f91d82dc15",
+      "source_packed_sha256": "a32241fb000f9696f846efcc32ab72d07714465edbc16fe914b33f62d65c83cc",
+      "source_unpacked_sha256": "201054c429f3b8baa76b2690172a4393ea37f19c7fa52516fdd2b4a63c98748b",
+      "validations": {
+        "elf_graph": true,
+        "no_bytecode": true,
+        "unchanged_outside_js_spans": true,
+        "syntax": {
+          "syntax": true,
+          "imports": 750,
+          "exports": 0
+        },
+        "upx_integrity": true,
+        "exact_unpack_roundtrip": true
+      },
+      "patches": [
+        {
+          "id": "snapshot-caller-system",
+          "offset": 108596483,
+          "bytes": 1301,
+          "replacement_bytes": 1015,
+          "before_sha256": "0efacfa4f278a157324cb49cd86430909ed8d4828035102fc557ef817e70820f",
+          "after_sha256": "eca5e3e84b07876d8b41792057e6e36d752c2942477880cf3948e7e0c09fe570"
+        },
+        {
+          "id": "preserve-caller-api-blocks",
+          "offset": 108608591,
+          "bytes": 2123,
+          "replacement_bytes": 2034,
+          "before_sha256": "00d078e840a3f31868d7198f251e8a3b9d26fe7ce8b377497783bcd3dbb7dc91",
+          "after_sha256": "486a3904b7153ba20169f5b33c32f6404e9482e9614c5db91cbf43ce2f9d6c52"
+        }
+      ]
+    }
+  },
+  "tools": {
+    "upx": "upx 5.0.1",
+    "bun": "1.3.14"
+  },
+  "patches_sha256": "439c52bcf592132488b71b7559300883f5e4f19877a8a1c4570897676d9c8686",
+  "semantics_sha256": "be63212d35a05d903946852d58f0ef4c3601c32339d08b7733f43fde034c3227",
+  "local_validation": {
+    "completed": true,
+    "native_execution": false,
+    "behavior_tests": 65,
+    "scope": "actual source fragments and upstream differential; no complete ELF/provider execution"
+  },
+  "limitations": [
+    "No Linux ELF/kernel/provider execution",
+    "No guarantee of quota savings, thinking or format compliance",
+    "Stock/non-kin behavior unchanged; only zero/identity native path has caller snapshot guarantee"
+  ],
+  "inherited_repairs": [],
+  "native_lifecycle_contract": "nonblocking_cancel_v1"
+}

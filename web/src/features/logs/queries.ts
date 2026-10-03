@@ -39,6 +39,21 @@ export function requestLogQueryOptions(id: string, enabled = true) {
   })
 }
 
+export function rawRequestLogQueryOptions(id: string, enabled = false) {
+  return queryOptions({
+    queryKey: ['panel', 'request-log-raw', id] as const,
+    queryFn: () =>
+      api<RequestLogDetailPayload>(
+        `/api/panel/request-logs/${encodeURIComponent(id)}?include_raw=1`
+      ),
+    enabled,
+    gcTime: 0,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    retry: false,
+  })
+}
+
 function nextOffset(
   lastPage: RequestLogsResponse,
   allPages: RequestLogsResponse[],

@@ -49,7 +49,7 @@
 | POST | `/vms/:id/oauth/to-setup-token` | 把当前完整 OAuth 活票改成 Setup Token（保留 refresh/过期）。已是 setup-token 则幂等 |
 | POST | `/vms/:id/oauth/generate-auth-url` | PKCE 授权链接；无 SOCKS5 拒绝。`{ flavor: "claude_code" }` 为官方 Claude Code 授权页。`{ flavor: "setup_token" }` 为 inference-only PKCE，不启槽内 CLI |
 | POST | `/vms/:id/oauth/exchange-code` | 粘贴授权码，经槽代理换票。完整 OAuth 才排队初装。flavor 以 session 为准 |
-| GET/POST | `/vms/:id/official-cc-bootstrap` | 初装进度 / `{ manual:true }` 再跑 |
+| GET/POST | `/vms/:id/official-cc-bootstrap` | 初装进度及保留失败诊断 / `{ manual:true }` 再跑 |
 | GET/PUT | `/vms/:id/seed-settings` | 播种；强制保留 telemetry/bedrock/vertex 等 env |
 | POST | `/vms/:id/collect-identity` | guest 采集（locale/tz/`guest_machine_id`） |
 | POST | `/vms/:id/reload` | 重载该槽 worker |
@@ -138,7 +138,7 @@
 
 `PUT` 热更新。`tiers` 必须回传：`PUT` 是整体替换而非 patch，缺字段即置空。保存时按 Pro/Max 把未手动 override 的槽并发写回去。
 
-`compatibility.persona_preset`（`official` / `official_full` / `zero` / `custom`）和 `compatibility.cache_ttl`（`5m` / `1h`）保存后投影到每个 Claude 槽的 `vms/<id>/run/kernel.json`：`persona_preset`、`system_layout`（`zero`→`zero`，其余→`identity`）、`default_cache_ttl`。响应 `kernel_persona.updated` 是本次字节有变化的槽数。`PATCH /vms/:id` 的 `timezone` / `timezone_follow_proxy` 另把 `timezone` 热写进该槽 `kernel.json`，`timezone_sync.kernel_hot` 表示文件有变化。容器 `TZ` 不在这次写入里。Codex 槽不写。
+`compatibility.persona_preset`（`official` / `official_full` / `zero` / `custom`）和 `compatibility.cache_ttl`（`auto` / `5m` / `1h`；auto 按凭证默认，显式块 TTL 不被覆盖）保存后投影到每个 Claude 槽的 `vms/<id>/run/kernel.json`：`persona_preset`、`system_layout`（`zero`→`zero`，其余→`identity`）、`default_cache_ttl`。响应 `kernel_persona.updated` 是本次字节有变化的槽数。`PATCH /vms/:id` 的 `timezone` / `timezone_follow_proxy` 另把 `timezone` 热写进该槽 `kernel.json`，`timezone_sync.kernel_hot` 表示文件有变化。容器 `TZ` 不在这次写入里。Codex 槽不写。
 
 `compatibility.agent_standing`（字符串，≤2000）与四个按档布尔 map `agent_standing_presets` / `agent_standing_hide_presets` / `persona_env_presets` / `persona_hide_presets` 控制常驻约束、约束遮罩、Environment 和整档 usage 遮罩，不投影到 `kernel.json`，Node 每次请求热读。`GET /api/panel/persona/preview-vars?timezone=<IANA>` 返回 system提示词页预览用的真实模板常量（身份句、官方 agent 全文、按该时区渲染的 Environment），不含 billing；时区非法或缺省按 UTC。
 
@@ -171,22 +171,259 @@
 | PATCH/DELETE | `/api-keys/:id` |
 | GET | `/request-logs` |
 | GET | `/request-logs/stats` |
+| GET | `/request-logs/export` |
 | GET | `/request-logs/:request_id` |
 | GET | `/request-logs/:request_id/attempts` |
 
 创建密钥只在响应里明文出现一次。存储为 HMAC 索引。
 
-attempts：每次选中的 VM/账号、错误域、cooldown、提交边界、终态。`normal` 摘要；`debug` 另存脱敏 body。`X-Request-ID` 回写。`X-Kin-Debug` / `X-Kin-Log` 可单请求覆盖。
+attempts：每次选中的 VM/账号、错误域、cooldown、提交边界、终态。`normal` 摘要；普通 `debug` 另存脱敏 body。`X-Kin-Debug` / `X-Kin-Log` 可单请求覆盖日志级别；不能越过下面的原始正文开关。
+
+### 临时原始非流式诊断（2026-09-24）
+
+在设置 → 日志选择 **Debug** 并开启 **临时原始非流式诊断**，对应：
+
+```json
+{"logging":{"mode":"debug","raw_nonstream_debug":true}}
+```
+
+默认关闭。只登记已鉴权、原始 Claude Chat `stream:false`（JSON boolean）的请求；stream:true、未写 stream、原始 Codex、无效 JSON、超过入站限制等不登记。显式 server off 不被请求 debug 头越过。before_convert 改到非 Claude/Codex 时丢弃候选；保守地不登记原始 Codex 改到 Claude 的请求。关闭开关不删除已有记录。
+
+登记后的记录仍存于 `request_log_debug.record_json`，没有新表。每个登记请求有新的服务器 request_id（响应 `x-request-id` 和 attempt 关联使用它）；调用方原有 ID 保留为 `caller_request_id`，不是查询键。普通请求保留原有 ID 行为。原始行不会被后来复用该 ID 的普通 debug 写入覆盖。
+
+- `GET /request-logs/:id?include_raw=1`：仅 admin 显式读取完整原始字段。默认详情、两种日志列表、普通 CSV/JSONL 不含原始正文；super/user 不能通过传入参数读取 raw。
+- `GET /request-logs/export?include_raw=1&format=jsonl`：仅 admin；沿用筛选条件。`request_id=:id` 可精确导出单条。raw+CSV 返回 400；普通导出不变。
+- 导出逐条保留完整存储 JSON，并使用真实 UTF-8 序列化字节数预选。上限 32 MiB / 5000 条；超过上限的记录被省略并报告，不会切碎 JSON。`x-kin-export-count/total/bytes/unavailable/oversized/byte-limited/row-limited/truncated` 报告导出结果，并显式暴露给允许访问的跨域客户端。代理隐藏统计头时，单条下载仍可下载非空成功响应，但显示统计未知提示。
+- 日志详情需显式加载原始数据。UI 最多预览 24000 字符，完整数据在有界 JSONL 导出中；预览截短不等于存储截断。
+
+`raw_debug` 的主要结构：
+
+| 字段 | 来源 / 含义 |
+|---|---|
+| `caller.text` | 单次入站读取中的原始有效 UTF-8 JSON 文本；保留空白、重复键、数字写法，不由解析对象重建 |
+| `hops[].request.text` | 最终序列化的 Node→kernel/API-kernel body JSON；不是隐藏的 Anthropic wire |
+| `hops[].response.text` / `format` | Node 实际观察到的原始 JSON、SSE 或未知格式文本；`read_complete` 与 `truncated` 分开 |
+| `hops[].initial_metadata` / `hops[].trailing_metadata` | 白名单初始头与尾部 metadata 分别保存，不把冲突合并后冒充原始值 |
+| `hop_no` / `attempt_no` / `repaired` / `local_connect_attempt` | 实际 Node 发送顺序、外层尝试与恢复；`provider_call: unknown`，不推测内部计费次数 |
+| `hops[].derived_message` / `derived.assembled_message` / `derived.client_json` | 明确标记的派生视图，不能当成原始上游 JSON |
+
+客户端非流式并不意味着上游返回单个 JSON：目前槽位/API-kernel 路径通常仍收到 SSE。原始 SSE 保存为文本，Messages/Chat JSON 由 Node 组装。未开启下节 CC 原生跟踪时，可用证据止于 Node 边界，不能证明原生 CLI 内部没有再次改写提示词。
+
+采集上限为每请求累计 16 MiB 原始/派生文本、16 个保留 hop、4 个活动采集器。超过上限仍正常推理，只保留明确标记的连续前缀/省略计数；不是进程内存上限。状态区分未发送、完整观测、部分采集和并发容量不足；不能将有界记录当成无条件完整证据。`client_response_complete` 仅指 Node writableFinished，不证明客户端应用收到了全部内容。
+
+**敏感数据：** 不额外采集鉴权头或含凭证的 API envelope/proxy URL，但精确正文自身可能包含密钥、图片、提示词和工具结果。原始和未脱敏派生数据都在受保护字段中。沿用日志保留/容量清理；默认摘要 7 天、Debug 3 天，导出与备份副本不会随之删除。调试结束请关闭开关，分享前脱敏。
+
+### Claude 思考后缀与模型显示
+
+`claude-opus-4-6(60000)` 的括号内容是请求思考参数，不是另一个模型名称；服务端会解析/规范化为独立的 thinking 字段，再使用基础模型名。摘要中的 `requested_model` / `upstream_model` 原文仍保留，但已知 Claude 思考后缀与对应基础模型不再单独触发“重定向/不一致”。旧数据库的误标不作迁移，页面也会识别这一类旧记录；真正换成其它模型仍显示警告。
+
+列表提示与详情“思考后缀”显示的是**请求值，不是实际消耗或云端执行证明**。比如数字后缀可能受模型能力与 max_tokens 限制；具体生效值分别检查 Node 出站 request、CC native_input、最终 `http_exchanges[].request`。不能仅因响应模型名不含括号就断定预算丢失，也不能仅凭这个提示断定最终云端使用了该预算。
+
+### CC 真实出站全链路（2026-09-27，临时）
+
+用于定位 `cc-fixed` 的真实 API 请求/回复与 CLI 输出是否不同，**默认关闭**。这不是离线模式，也不会强制 thinking、自动续写或增加一次模型调用。
+
+```json
+{"logging":{"mode":"debug","raw_nonstream_debug":true,"cc_native_trace":true,"offline_kernel_probe":false}}
+```
+
+1. 更新控制面和前端，在日志设置开启上面三项；继续使用明确的 `stream:false` Claude Chat 请求。
+2. 目标槽必须是 **cc-fixed**。保存设置后，对目标槽重新应用同一数据面并重启 kernel，加载预载脚本。跟踪功能本身不重打包 CC/kernel；若同时升级 fixed 版本，须先按该版本要求同步新 CLI。原版、其它数据面和默认值不自动改变。
+3. 仍从日志详情显式加载原始正文、下载完整 JSONL。原始访问权限、导出限制与上节相同。
+4. 先检查 `raw_debug.hops[].native_trace.status`。`captured` 表示本次观测窗口完整；`unavailable`、`partial_capture` 或 `invalid_trace` 都不能当成完整的真实上游证据。配置未加载、kernel 未传递关联标识、无匹配运行文件、限额、取消等会明确报告，不从 Node 日志重建。
+
+**不需要换 master key。** 真实跟踪模式仍正常推理并返回正常响应；与离线验证的 422 拦截不同。普通 managed/user key 满足有效 Debug、原始诊断和显式 `stream:false` 条件即可登记。
+
+可先打开请求实际命中的 **VM → 概览 → CC 原生跟踪**，刷新页面检查，不必为此发送模型请求。该状态取自既有内核健康的 CLI PID 和私有预载快照：配置写入不等于运行中进程已加载。`ready` 只表示找到匹配 PID/脚本的预载记录，具体请求仍以 `native_trace.status` 为准。未匹配时先选中这台 VM、重新应用同一个 `cc-fixed` 并重启 kernel，不能只保存日志开关。
+
+若记录为 `native_trace_not_observed`，新导出还包含 `details` 中的 `diagnostics.ticket_state` 和 `diagnostics.readiness`，包括是否见到 native 帧、是否出现追踪标识及登记数量等**进程累计元数据**；它们不是另一个请求的正文，也不能用来猜测某次请求归属。旧日志没有捕获的 CC 数据无法事后补出。
+
+每个 hop 的 `native_trace.details.text` 是报告 JSON，主要字段：
+
+| 字段 | 含义 |
+|---|---|
+| `runtime` / `hook_sha256` | 被观测进程、可读的执行映像哈希及加载脚本哈希；不是界面所选版本的推测 |
+| `native_input.text` / `cleaned_request` | CC 接收到的 native JSON 帧；后者仅去掉服务器签发的临时关联字段 |
+| `http_exchanges[].request` | 最终 global/undici fetch 或 HTTP2 调用的 URL、白名单头和请求正文 |
+| `http_exchanges[].response` | API 返回给 SDK 的响应，独立于 CC stdout；状态、白名单头、正文、`read_complete`、`capture_kind` 和 `observation_layer` |
+| `http_exchanges[].timeline` | 请求、响应头、首末正文块、读取结束的实际记录序号 `n` / 时间 `at`，可与 CC 输出帧及 `native_terminal` 对照 |
+| `stdout_frames` | CC 调用 stdout 写出的逐条 JSON 帧；不等于 kernel 已接收，可与 API 正文和 Node 的 kernel SSE 对照 |
+| `execution_options` | 与非流式回退相关的少量非敏感环境开关；不代表已读取 SDK 缓存的 feature gates |
+
+- Fetch 同时覆盖全局和固定 CC 实际优先使用的 `undici.fetch`；沿用原 Agent/dispatcher，不为日志强制改成其它传输。捕获的是 API 响应流在 SDK 消费点给出的字节，不是 CC 写出的回复。不会另开 reader、clone、tee 或后台 drain。HTTP 内容可能已由 fetch 解压；`text()` 只提供 `decoded_text`，`json()` 只提供 `parsed_json` 时，原字节明确不可用、整体为部分采集，不用重新编码伪造原字节。
+- 固定 CC 的 CCH 签名在 JSON 序列化后通过字面量 `replace('cch=00000', 'cch=<5hex>')` 写入，不是 JSON 重新序列化。预载被动观察这个准确的字符串替换，继承已观察的序列化归属；不改请求、不重签名、不按相似正文或最近任务猜归属。未知/退役值与并发相同正文仍保守拒绝关联。旧记录若有 `correlation_gap / unowned_api_send / transport:undici`，表示看到了发送但没能归属，不是没加载 undici 或 user key 无效；旧云端正文不能事后补出。部署此修正后也需要对同一 cc-fixed 重新应用/重启以加载新预载，不需重包 CLI。
+- HTTP2 保留响应原始字节；压缩数据使用 Base64，并另列有界 `decoded` 视图。HTTP2 请求暂存上限 2 MiB，超限仅影响捕获、不截断真实请求。
+- 每次已观测的 API 尝试分别记录，包括 SDK 重试/回退；数量不是订阅计费认证。如果 kernel 已成功结束而 CC 任务仍有记录在生成，诊断会等待 CC 自身终态，最多到该次上游超时界限，客户端取消可中断等待。**因此开启时非流式返回可能比平时慢**，但不补发任何推理请求。未加载/未出现的 producer、失败发送不进入这个延长等待。
+- `message_stop`、CC 的 `kin_job_done` 和 HTTP EOF 是三个不同的边界。CC 提前报终态时，只要已有被观察 API 响应仍在读取，就继续保留接收到的数据，受原诊断截止时间约束；全部响应结束后再保留约 300ms 收尾窗口。不声称捕获未来任意后台调用。
+- 重复票据还由 trace 文件的排他创建复核：即使两个进程的 claim 重命名均成功，第二个也会留下 reused 标记，使结果变为部分采集，不能把两次 native 执行冒充一次完整交换；不合并两进程正文、不改变推理。
+- 如果 SDK 在第一条 Message 后停止读取或取消，`read_complete:false`、`capture_kind:sdk_cancel/sdk_iterator_return` 和 `api_response_not_fully_read` 会明确保留。不能把这段短文当成云端完整响应，也不能知道取消后未接收到的假想后文。此模式不强行继续读取或另发请求来填补证据。
+- 原生侧每 job 最多 8 MiB 保留记录、4 个活动采集；仍受外层 16 MiB raw 上限。JSONL/内层报告可能因此不完整。关联只维护有界内存哈希（256 个活跃序列化键、2048 个已结束/退役键），不为未登记请求保存正文；相同正文无法区分、迟到调用或索引耗尽时省略而不混写，可能需要重启目标 kernel 创建新的诊断窗口。
+- 重复使用同一 ticket 的 native 任务（包括并发抢占）标为部分采集，不把第一份冒充全部。缺失输入/输出、响应状态、终态，或序号/调用数矛盾，也不能被认证为完整记录。
+- 数据关联不改会话/device 字符串；只使用单次私有 ticket。单次 ticket/正文临时文件放在槽内 `.kin/cc-native-traces`，正常收集后删除；不含请求正文的进程就绪快照及异常退出遗留文件在后续安装/诊断时按 2 小时门槛清理，不保证无人运行时自动清除。日志数据库和备份仍按各自保留规则处理。
+- 关闭开关停止新请求登记，已登记请求仍收尾。重新应用/重启后才卸载已经加载的预载脚本。与自定义 `BUN_OPTIONS` 冲突时拒绝启动该跟踪入口，不静默丢弃其它预载配置。
+
+**敏感性不变：** 授权/Cookie 等头不记录，但请求、响应、工具内容自身可能含秘密。仅管理员可见/导出，分享前脱敏。此功能不证明短答已经修复：真实 API→CC→kernel→Chat 的对应记录才是定位依据。
+
+### 官方初装的 usage 失败诊断
+
+`usage=fail/failed` 表示额度核验没有通过，不能仅凭这一行判断官方 CLI 没装好、凭证失效或 SOCKS5 故障。查看 `hello_ok`、`step` 和具体错误；hello 初装仍使用 `.local/bin/claude`，与 `cc-fixed` 推理入口分开。
+
+完整现场输出已确认，CLI `/usage --print` 可以只返回本地会话统计和订阅计费提示，`usage_report.rate_limits:null`；命令退出 0 不代表获得额度。因此初装的额度步骤现改用已有的槽内 `kin-worker oauth usage`，与 profile/models 使用同一槽内接口，不从控制面直接请求 Anthropic，也不发模型生成请求。worker 成功、HTTP 2xx 和实际额度数据同时成立才可通过；4xx 拒绝/限流不连续重试，其它缺失/暂时失败最多三次。原始 CLI 提示语不会被当成额度成功。
+
+在 **VM → 账号 → 官方 Claude Code 初装**点刷新和 **下载初装诊断**，只读取现有结果，不会重跑 hello 或换票。GET `/vms/:id/official-cc-bootstrap` 的失败状态可附带 `usage_diagnostics`，仍保留错误类型、有限脱敏摘要、文件字节数和截断/时间不符状态。
+
+`kin-official-usage.json` 兼容两种来源：旧版 CLI JSONL，和新版 `type:official_usage_probe / source:slot-worker-oauth` 的 worker 结果记录。新版保存的是解析后的 HTTP 状态与 body，不是原始 HTTP 字节，不复制鉴权/响应头；导出的 `source:existing_slot_worker_result`、`http_status` 与旧版 `cli_exit_code` 区分，旧 CLI stderr 不混进新结果。不读取凭证文件、不额外请求上游、不把 quota 失败改成成功。
+
+刷新旧的 `rate_limits:null` 文件不会凭空获得新额度；只有更新后执行新的初装额度步骤，才会走槽内结构化查询。旧失败状态不会由 GET 自动改写。缺失或陈旧的输出明确标记，不伪造当时的响应。
+
+诊断下载按白名单字段生成，不包含完整 prompt/stdout 包装或凭证。`stdout_text` 提取 assistant/message 的 text 块和非空 result 文本（脱敏后最多 8192 字符），不会让空 result 覆盖前面的额度文本。`stdout_excerpt` 只是前 600 字符预览；`file_truncated`、`stdout_text_truncated`、`stdout_excerpt_truncated` 分别说明各层是否截短，不能只看文件读取成功就认为摘要完整。
+
+若旧文件现在可解析出完整额度，诊断显示 `usage_output_parsed`；这是重新解释历史输出，**不会写回旧初装状态，也不是新的额度探测**。显式错误始终优先，结构化 limits 的权威性不被文字摘要覆盖。错误及文本仍可能含账号相关信息，分享前检查。只有实际诊断才能区分权限/scope、网络、CLI 错误或无法识别的输出，不能先假定某一类并要求重复初装。
+
+### 离线 kernel / CLI 全链路验证（2026-09-25）
+
+这是临时诊断模式，**默认关闭**，不是新的真实推理数据面。部署控制面代码及前端后，在设置 → 日志先选择 Debug、开启原始非流式诊断，再开启「离线 kernel / CLI 验证」。
+
+```json
+{"logging":{"mode":"debug","raw_nonstream_debug":true,"offline_kernel_probe":false}}
+```
+
+- 开关在请求开始时取快照。开启后，新的推理只允许 **master key + Claude `/v1/chat/completions` + 显式 `stream:false` + VM 后端**；其它推理/count_tokens 请求明确拒绝，绝不回退正常推理、账号池或凭证刷新。请求头不能开启此模式。关闭开关不会把已接收的离线请求变成真实推理。
+- **不是整个控制面的断网开关**：已开始的请求、后台监测、`/v1/models`/usage 和管理员操作不被自动停止。测试前停止其它业务请求；不要用账号额度变化证明该诊断是否出网。
+- 使用当前活动 Claude Docker 槽的本地镜像 ID；可用已有 `x-kin-vm` 指定槽位。镜像必须已存在，包含 Python 3，且能运行 Linux amd64 ELF。不拉镜像、不安装依赖、不重装或重启真实槽。
+- `offline_kernel_dataplane`：用户入口只接受 `src/lib/transport/offline-candidate-round.json` 列出的本轮待测项。R3 已完成比对，当前清单为空：CC 获准派生为正式 `cc-fixed`，Crag 尚有请求语义问题且没有新修正版，不要求重复测试旧候选。不再列出原版、已转正版本或历史候选；旧保存值返回 `offline_selection_required`，不会自动换版；清单为空时也不会自动关闭离线开关或恢复真实推理。测试结束后必须由用户明确关闭离线验证。指定离线搭配**不改变** `inference.dataplane`。历史文件及低层回归工具支持保留，但不是当前菜单/API的可选资格。
+- 记录选定/已安装 kernel 与 CLI 的 SHA256、镜像 ID、system layout、来源。磁盘文件哈希不等于已验证运行中进程的二进制。探针使用单个新槽、全新 HOME 和假 OAuth 身份，不复刻已有会话、20 槽并发、真实凭证或缓存状态。
+
+每次请求依次执行两段：
+
+1. **真 kernel → 假 CLI**：保留 argv、白名单环境、私有请求文件、stdin 和模拟输出。已知 `native_messages` / 常见 stream-JSON 帧可回复；未知握手只捕获并标明未完成，不伪造兼容成功。
+2. **真 kernel → 记录代理 → 真实 CLI 副本 → 本地假 Anthropic**：记录 CLI 实际输入/输出、最终 HTTP 请求 JSON、生成的 mock Message JSON、实际写出的 JSON/SSE 和 kernel 回包。假服务只处理支持的本地 API，不转发外网。
+
+隔离容器为 `network=none`、非 root、只读根文件系统、去掉 capabilities、不挂载生产 HOME/凭证/工作目录或 Docker socket。上传使用新建匿名卷；输入在运行用户视角不可写，脚本会在启动 kernel 前检查权限和仅 loopback 的网络接口。匿名卷随临时容器删除；正常结束、错误、取消均执行清理。单实例、内存上限 1 GiB，每段约 30 秒（镜像检查/上传/清理另计）。异常退出仍可能留下已创建但尚未运行的临时容器；只应清理带 `vm2api.offline_probe=true` 标签且名称为 `kin-offline-*` 的已确认诊断实例，不要清理真实槽。
+
+通过入站鉴权/JSON 读取的诊断调用使用 **HTTP 422 的诊断回执**（鉴权/读取失败保留既有状态码），不是应追加到对话中的模型正文；`offline_probe_captured` 表示捕获/正文校验完成，`offline_probe_incomplete` 或其它 `offline_*` 表示缺失、差异或运行失败。模拟 usage 不写成真实用量，不调用真实账号池/凭证刷新/粘滞绑定；日志仍会有这条诊断记录。
+
+原始数据仍在同一条受保护的日志中，使用原有的管理员「完整 JSONL 下载」：
+
+- `raw_debug.caller.text`：原始 caller JSON。
+- `raw_debug.offline_probe.details.text`：再解析一次 JSON，即完整诊断报告。`meta` 标明文件/配置来源；`node_envelope` 为诊断用 Node 对象（身份是合成值，未经过正常账号选择/TTL pin/远程媒体获取）。
+- `stages[].captures`：`node_to_kernel_envelope` 是实际提交给 kernel 的序列化 JSON；`cli_argv`/`cli_environment`/`cli_stdin`/`cli_request_file`/`cli_stdout` 是 CLI 边界记录；`anthropic_request` 是 CLI 发往本地假服务的实际 body；`mock_anthropic_message` 是生成夹具；`anthropic_response` 标明实际成功写出的字节及完整性。假 CLI 输出预写记录有单独 observation 标记。
+- `stages[].kernel_reply`：实际 kernel 响应头、尾部 metadata、`body_text`、原始字节 `body_b64` 和 SHA256。
+- `stages[].node`：把捕获字节送入私有本地 socket，调用**同一套生产 Node 读流/非流式组装/Chat 转换**得到的 Message 和 Chat；这是明确的 decoder replay，不是第二次模型请求。`raw_debug.derived.client_json` 则是实际 HTTP 422 诊断回执。
+- `stages[].request_checks`：已识别 JSON 中的 system 数量、文本出现位置/role，以及 thinking、output_config、max_tokens。匹配不到或角色变化不自动等同于模型不遵守；未知/截断形状不参与判断。
+- `stages[].checks`：固定长正文的预期/实得字符数、SHA256 与相等性。夹具含长中文、emoji、格式标签，usage 故意很小，以检查计数是否错误控制正文长度。夹具不按 caller 提示词生成，不能据此判断模型格式服从能力。
+
+**采集完成不代表 caller system 已保留。** `offline_probe_captured` 的长正文校验只检查模拟回包的传输；请求语义应另外核对 `request_checks` 和实际 CLI/API 捕获。2026-09-26 收到的 v1.3.55 数据已证实：该版 wrap 原生 CLI 在 zero 路径替换 caller system，cc-node 的 native/crag 入口存在 `Config accessed before allowed.` 初始化错误；这些不是增加诊断超时能修好的问题。假 CLI 的 stream-JSON 回包现按输入会话 ID（缺失时用 `--session-id`）关联并带上 `stop_reason`；此探针修正不修改真实原生组件。
+
+历史轮次曾使用同一份请求对照 wrap、cc、crag。当前不再列出这些旧项；仅在有新的待测修改时更新共享清单。即使采集显示成功，也必须核对请求语义；缺失阶段、丢失历史或 role 改变均不能算通过。
+
+入站原文与诊断 envelope 各限制 1 MiB，容器每阶段捕获有 4 MiB/4096 条界限，最终仍受原始日志累计 16 MiB 和完整记录导出 32 MiB 限制；超限明确标记，不声称无条件完整。导出可能含私有正文；分享前脱敏，测试结束关闭离线开关，不再需要正文采集时另关原始日志开关。
+
+### 出口组件与终端入口
+
+`kin-egress` 是槽位网络出口的 TCP/DNS 转发组件：代理出口经过它转到绑定的 SOCKS5，DNS 可走 DoH；本机直连出口可以不经过它。它不做 Chat/Messages 转换，也不决定 system、thinking、缓存断点或 agent 轮数。
+
+面板运维终端的 `claude` 函数调用 `slotHost.bins.cli` 指定的原版 `cli-node`，读取槽内 `.claude` 配置。这里“原版”是上游项目发布、未加本 fork fixed 补丁的程序，不是另外下载的官方安装程序。打开终端本身只是 shell；手动运行 `claude` 才走交互入口，绕过 `/v1` 转换与 API 请求日志，但可能与 API 共用账号和额度。API 仍走所选的 `cc-fixed`/`wrap-fixed`；官方初装 hello 的 `.local/bin/claude` 又是单独的路径。终端不会自动把 API 数据面切回原版。
+
+### 正式修复数据面 `wrap-fixed`（当前 v194-r1）
+
+原版 `wrap` 仍为默认。用户已批准将通过其离线样例验证的 CLI 修复转为**可选择的正常数据面**；没有自动修改现有全局/单槽配置。数据面页面新增「cli-node 修复版 + kernel」。建议暂停业务请求，勾选目标 Claude 槽并保持“切换后重启 kernel”开启。
+
+```json
+{"dataplane":"wrap-fixed","ids":["vm-01"],"restart":true}
+```
+
+沿用 `POST /api/panel/dataplane`。不传 `ids`／`all:true` 修改全局默认，仅同步继承默认的 Claude 槽；显式单槽覆盖及 Codex 保留。设置页和 `/admin/routing` 的默认数据面修改也会同步对应的继承槽。同步前检查资产；运行同步失败会明确返回失败报告，不能把“配置已保存”当成所有槽已生效。`restart:false` 仍会写入匹配的磁盘配置，但要稍后重启才实际启用新程序。
+
+- 仅修复 CLI 固定在 `share/wrap-fixed/v194-r1/`（Docker fallback 为 `image-wrap-fixed/v194-r1/`）；目录名是 CLI 修补版本，不代表运行 kernel 版本。kernel 复用原版选择器：优先可用 `KIN_KERNEL_BIN` / `bin/kin-kernel`，再按原有规则读取 `share/wrap-cli` 样本。旧 bundle 中的 kernel 和 manifest.kernel 仅是历史验证记录，不作为运行源或缺失 fallback。
+- 安装修复 CLI 为 `.kin/cli-node-fixed`，共享 kernel 按原生流程装到 `.kin/kin-kernel.bin`。原 `.kin/cli-node` 不覆盖。kernel 配置仍使用 `wrap` ABI，`claude_bin` 指向修复版文件。预检/安装/恢复/同步/离线捕获共用同一个 kernel 选择结果；缺失或非法 ELF 明确失败，不复活旧 bundle kernel。
+- 正常 release 更新与同步会更新共享 kernel，但不以原版 CLI 覆盖修复 CLI；不再为每次 kernel 更新建立一个 fixed 版本。重启/缺文件恢复/repair/重置保持数据面选择；固定槽仍不能通过“收成母本”覆盖原始 wrap CLI 模板。
+- 当前 CLI 以 v1.3.94 上游原版为基底重新定位 system 修复：保留 caller 快照，逐块追加，不经过 leftover 合并/按文本过滤；保留新版原生缓存逻辑。不能把旧偏移直接套到新二进制。新包只含 CLI，没有 kernel 副本。用户于2026-09-28批准 kernel 跟随原生源；本项目未修改 Rust kernel ELF。面板/取证以 `approval_scope:cli_only`、`kernel_policy:shared_upstream` 区分 CLI 审批和共享 kernel；安装结果的 `kernel_source/kernel_sha256` 指明选用文件。旧样例不认证每个新 kernel 的运行行为。部署后仍需正常同步并重启，控制面更新本身不证明运行进程换版。
+- 开始正常推理前关闭 `logging.offline_kernel_probe`。原始非流式日志可按需保留，但包含敏感正文。本轮离线选择器不再列出已转正的 `wrap-fixed`／`current`；如后续确有复测需要，应明确纳入那一轮的清单，而不是长期堆在候选列表。
+
+### R3 历史验收与正式 `cc-fixed`（当前 v196-r1）
+
+用户提供的两份 R3 Linux 隔离捕获均完整，固定长回复在 CLI、kernel 和 Node 间没有截断，但请求语义并不等价：
+
+- **CC + wrap kernel 通过本次样例检查**：caller system 原文 99,926 字符及 245 条历史逐字段保留；Opus4.6、128000、adaptive+summarized、effort=max 不变。相对已验收 CLI，额外带有原生 `context_management` 的 clear_thinking/keep=all 配置；metadata 的 device/session ID 为新值。billing 另保留 CC 原生的版本指纹后缀、`cc_is_subagent=true`、`cc_turn_origin=sdk`，其生成代码与原 CC 相同；不宣称与 cli-node 完全等价或真实额度效果已验证。CCH 重算匹配，kernel 回包字节和 Message 与参考一致，Chat 只有 created 时间变化。
+- **Crag 不转正**：caller system 被包入 user；245 条历史仅余最后一条 user 内容，max_tokens 为64000，缺少 effort=max。模拟回复完整不能弥补请求丢失。
+
+正式数据面名称仍为 `cc-fixed`（「cc-node 修复版 + kernel」），CLI 固定使用 `share/cc-fixed/v196-r1/`（Docker fallback 为 `image-cc-fixed/v196-r1/`），kernel 按上述原生共享源选择，不再锁定该目录中的旧 kernel。沿用 `POST /api/panel/dataplane`，例如：
+
+```json
+{"dataplane":"cc-fixed","ids":["vm-01"],"restart":true}
+```
+
+它安装 `.kin/cc-node-fixed` 与共享 `.kin/kin-kernel.bin`，native family 仍是 `cc`。默认值和现有选择不变，不自动操作运行槽。固定 CLI 的审批/哈希仍受检查，非法 CLI 不退回原版；kernel 缺失不使用历史副本。切换或同步前暂停请求，并关闭离线开关；暂不重启时要稍后重启才能生效。
+
+v186-r1 在已验收 CC 修复版上重打包，合入新的原生缓存处理和 system TTL 参与选择；初始化、system、workload、debug 依赖及输出循环的修复字节保持不变。缓存模块旁的 beta 定义仅为适应定长区段做等价压缩，内容/合并行为已对照。Node 为两个 fixed 写入同 TTL 的双消息断点，CLI 统一自产 system/tools TTL、排除 thinking 并将 marker 控制在四个以内。因此无需切回原版即可同时使用新缓存规则和 system fix。
+
+历史 **v189-r1** 在 v186 已修复字节上，仅移植上游 `259dbbd` 的 native `max_tokens` 终态条件：`agent:kin` / `kin_native_messages` 不再额外生成假的 `max_output_tokens` API 错误；仍保留正常的 stop reason、usage 和非 native 的原处理。CC 原6个修复区及2个缓存区、wrap 的2个 system 修复区均不变；没有改预算、模型、系统文本或自动续问。生成脚本为 `scripts/refresh-fixed-cli-terminal.mjs`，锁定原版 CLI 参考及两个已批准基底，拒绝未知输入；完整语法/ELF/UPX往返、逐字节重现、编译片段与上游对照通过，不代表执行了 Linux ELF 或云端验收。这个触顶修复不解释 `end_turn` 的短答/格式缺失。
+
+此前 **v191-r1** 跟进上游 `011a838` 的 native 生命周期：异步取消不阻塞共享 stdin，支持 ping；取消只对原 job 回执，不清理复用该槽的新任务；原始 SDK/HTTP 错误通过 `onError` 保留 status/code/type/message/retry-after，不再先经过交互式渲染；native 的 retry/fallback 入口被关闭。Node 自己的未提交恢复仍受原有派发预算约束，不能将“关闭 CLI 隐式重试”误读为完全没有 Node 重试。新 kernel 原样跟随共享源，没有私改或复制到 fixed 包。
+
+`wrap-fixed` 在新原版基底保留两处 caller 修复。上游原版 CC 未更新，`cc-fixed` 在 v189 基底移植对应逻辑：原生桥额外透传错误回调但保留 caller snapshot，其他旧 system/初始化/workload/debug/Crag 错误细节、缓存区和触顶修复保持。新错误帮助函数单独封装，避免覆盖 CC 包内已有的同名 `text/field/clip`；为定长区段容纳该帮助函数，对邻接 imageValidation 仅做已核对的等价压缩。`scripts/refresh-fixed-cli-lifecycle.mjs` 锁定两类输入并记录区段、源码控制和压缩往返。manifest/registry 还须匹配 `native_lifecycle_contract:nonblocking_cancel_v1`。这不是完整 Linux/云端认证，不认证旧5h额度差异的原因。
+
+当前 **v194-r1** 在上述生命周期合同上合入 `1b735bf` 的自动权限分类上下文和错误元数据。`wrap-fixed` 在新原版上重补 caller 快照与逐块保留；`cc-fixed` 从 v191 延续，增加逐 job 分类上下文验证，分类调用保留显式 disabled、effort、采样和混合缓存标记，不套普通人设/缓存默认值。普通请求的 CC 框架、system 保留、60000 等手动预算、初始化/workload/debug、非阻塞取消和禁止隐藏重试仍保留。CC 构造归因头的重复代码仅等价提取为局部函数，普通请求的最终内容和调用次数不变；原有初始化和依赖修复字节不变；新的错误帮助函数仍在私有闭包，不能覆盖包内通用标识符。
+
+分类用途只从受支持的 Anthropic Messages 官方分类约定识别，不接受公开 `request_context` 标记作为授权，也不把普通 Chat 变成分类器。分类路径保留原缓存标记并绕过普通会话 TTL pin；不兼容模型或缺能力的运行时明确返回400，零派发不消耗派发预算。普通酒馆请求不会因该功能被强制 thinking、改格式或自动续写。`scripts/refresh-fixed-cli-classifier.mjs` 锁定基底并校验新包；manifest/registry 还须匹配 `classifier_contract:native_request_context_v1`。每包135项抽取源码控制、完整 JS/ELF/UPX 往返及两次完整重建通过，但这不等于实际 Linux/云端验收。
+
+**v196-r1 的 CC 启动修正：** v191/v194 在复制 native 生命周期时漏带了 `src/bootstrap/jobSession.ts`，完整包存在 `init_jobSession`、`getJobSessionId`、`runWithJobSession` 三个未声明依赖；旧片段测试的替身掩盖了它。当前 CC 从 v194 派生，补齐上游真实 AsyncLocalStorage 模块、状态初始化及 `getSessionId` 的逐任务读取/全局回退。不用空函数、全局交换 session 或改 kernel 绕过。三处定长补丁借用状态导出表/相邻函数的等价空白压缩；v194 的 system、缓存、初始化/依赖、生命周期和分类补丁区段均逐字节保留。`scripts/refresh-fixed-cc-session.mjs` 额外对完整解包源码作作用域绑定检查，native 区段未声明依赖由3个降为0，真实启动/并发/元数据控制不再伪造这三个依赖。普通 wrap-fixed 仍为 v194，未重包。
+
+CC registry/manifest 还须匹配 `session_contract:native_job_session_v1`。本地完整包绑定检查和编译小宿主不是实际 Linux/云端运行；旧包留作构建输入，不是待测候选。若设置返回 `dataplane_sync_failed`，`routing_committed:true` 表示配置已保存但运行同步失败；`dataplane_runtime.items` 保留各 VM 的 code/error/kernel 结果，设置页会显示有界摘要。请到数据面页对失败槽明确同步并重启，而不是把再次保存相同配置当作已重试启动。
+
+部署新版控制面/前端/CLI 文件后，暂停目标槽的业务请求，重新应用同一个 fixed 数据面并重启 kernel/CLI；不要改选原版 `wrap`，不要仅保存日志开关。版本目录表示 CLI 补丁版本，不是 CC 软件版本或 kernel 版本。新二进制已通过本地源码、语法、ELF、UPX 往返和重现检查，仍未执行真实 Linux/云端验收；旧 R3 样例不认证本次生命周期或真实额度效果。本次共享 kernel 随 main 更新，需一并同步并重启；仍沿用原生来源，不新增候选/回退菜单。
+
+本轮清单已关闭，不再要求重复测试 CC/Crag r3。历史目录 README 和日志是当时的记录，不代表当前可选资格。
+
+### CC / Crag r2（历史修复记录）
+
+新增 `candidate-cc-r2` 与 `candidate-crag-r2`，对应独立 `share/offline-candidates/native-v155-r2/cc-node`。r1 文件和选择值均保持原意，不会悄悄指向 r2。两种 r2 **仅用于离线截获，不能通过正常数据面接口启用**。
+
+r2 复用 CC 包内已有的 `getWorkload2()`／`runWithWorkload()` 异步上下文，修正 User-Agent 对不存在的 `getWorkload()` 的引用并补依赖初始化；不添加另一套状态或常量 stub。Crag 的 assistant API 错误会保留具体正文，不再全变成 `api_error`。原有 system/入口初始化修复不变，Crag kernel 的请求包装未修改。
+
+R2 当时使用 Debug/原始日志/离线开关进行测试；记录显示两种组合均在 API 前遇到日志函数错名，随后由 R3 修复。旧文件保留，但这些选择值不再是当前测试入口。
+
+### r1 重打包候选的原始离线验收记录（2026-09-26）
+
+用户明确授权的实验候选 `native-v155-r1` 位于 `share/offline-candidates/native-v155-r1/`，与正式 `share/wrap-cli/` 分开。Docker 镜像将候选放入 `image-offline-candidates`，普通启动/同步脚本不会把它安装到生产槽。该目录保留首次分发时的历史 manifest，不回写其验证标记。后续用户已提交 r1 的 Linux 截获：CLI 样例通过并批准派生为上面的 `wrap-fixed`；CC/Crag 的真实 API 阶段失败，后续测试使用 r2。r1 文件本身仍受离线启动限制，不能直接当成转正版安装。
+
+沿用上述 Debug + 原始日志 + 离线开关，在「离线验证搭配」新增三个选择：
+
+| 设置值 | 本次隔离运行 |
+|---|---|
+| `candidate-wrap` | v1.3.55 wrap kernel + 候选 cli-node |
+| `candidate-cc` | v1.3.55 wrap kernel + 候选 cc-node |
+| `candidate-crag` | 原 crag kernel + 候选 cc-node |
+
+发送同一份真实 caller JSON，仍使用 master key 和显式 `stream:false`。候选流程只调用本地假 Anthropic，HTTP422仍是诊断回执。无须、更不应把候选手工复制进生产 `.kin` 目录。未选择候选、关闭离线开关或正常推理时，候选均不会被使用；普通槽位数据面接口明确拒绝候选选择值。
+
+候选只覆盖已确认的原生问题：
+
+- 在 native 查询选项中保留 caller system 的独立字符串快照，在最终 API 构造中追加原文块，不经过 leftover 清洗/合并；原生生成的头信息和环境说明仍单独保留。最后一个非 global 的原生 system 缓存标记延伸到最后 caller 块，标记数和 TTL 不增加，global 标记不移到私有 caller 文本。真实命中率仍需另行验证。
+- cc-node 的 native/crag 入口先执行既有初始化，再开始处理任务；不删除配置保护检查。
+- crag kernel 的 user-role 包装和参数传递本轮没有改动，第三种组合仍可能暴露其它差异，不能当作已达成完整 CPA 等价。
+
+候选的基础正式 CLI、kernel、layout 和文件 SHA256 均校验；基础版本更新、文件缺失、校验不符时直接拒绝，**不退回正式版本**。进入容器后会再次核对上传 kernel/CLI 字节哈希，未通过不会启动 native。候选程序自身也要求探针专用标识和字面 `127.0.0.1` 的假 API 地址。这些限制不是生产启用开关，不要通过改 manifest 或设置环境变量绕过。
+
+下载三份完整原始 JSONL，建议命名 `candidate-cli.jsonl`、`candidate-cc.jsonl`、`candidate-crag.jsonl`。报告新增：
+
+- `meta.candidate`：候选 ID、待验收状态、基础/候选 CLI 哈希、manifest 哈希、预期 kernel 哈希、补丁 ID 和本地检查范围。
+- `binary_inputs_verified` / `observed_binary_hashes`：隔离容器执行前对实际上传文件的核对；不是生产进程 inode 的证明。
+- `stages[].captures[kind=effective_mock_environment]`：该阶段真实 CLI 的候选标识/本地地址；第一段仍是假 CLI，不代表已执行候选。
+
+`local_validation.native_execution:false` 表示本地构建阶段没有执行 Linux CLI；用户这次是否真正运行了候选，应看阶段中的 `real_cli_executed`、实际捕获和哈希。`user_capture_accepted:false` 和 `production_approved:false` 不会因 HTTP422/长正文校验通过而自动改变。拿到日志后须人工核对最终 API 中的 caller 块数/顺序/原文、thinking/effort/max_tokens、返回正文和所有缺失阶段，再决定下一步；模拟验收本身不认证真实提供方鉴权、额度或模型行为。
 
 ### 协议字段（对齐 Sub2API usage_logs）
 
 | 字段 | 说明 |
 |------|------|
 | `cache_read_tokens` / `cache_creation_tokens` | 提示缓存读 / 写 |
-| `cache_creation_5m_tokens` / `cache_creation_1h_tokens` | TTL 细分（无细分归 5m） |
+| `cache_creation_5m_tokens` / `cache_creation_1h_tokens` | 上游 TTL 分项，缺失为 null；不会按请求配置重分类 |
+| `cache_creation_unclassified_tokens` / `cache_creation_estimated` | 未分类写入 token / 是否包含 5m 价格估算，由已有总量与分项推导；不伪造 TTL 分项 |
 | `requested_model` / `upstream_model` / `model_mismatch` | 三态；null = 上游未声明 |
 | `first_token_ms` | 首个业务事件（worker 回传） |
-| `stop_reason` | 流式来自 `message_delta` |
+| `stop_reason` | 来自上游终态；非流式 Chat 会合并可信 native 结束 metadata，原始差异见 raw 记录 |
 | 费用列 | 官方价 input/output/cache 5m·1h·read；上海日切 |
 
 `GET /request-logs/stats` 另返回 `window`：SLA、错误率、429/503、QPS/TPS、耗时与 TTFT 分位、按模型 `avg_first_token_ms`、`error_collection`。`GET /dashboard.ops` 默认近 1 小时同一形状。
@@ -263,6 +500,9 @@ Claude 槽测试与能力探针走官方 CC 入站（`/v1/messages`）。GPT/Cod
 sessionKey / 授权码导入必须走该槽 SOCKS5。
 
 ## 集群（SSH 节点，仅 admin；super 只读 `GET /cluster/nodes`）
+
+本轮继承上游的镜像式远端槽位范围：远端镜像只含原版 `wrap` / `cc`，**不包含本 fork 的 fixed CLI 或 CC 原生取证预载**；官方初装、主机式 CLI 修复/切换等仍受上游能力限制。不能把选择 `cc-fixed` 的远端槽悄悄指向原版 CC。此类配置/启动/派发会明确拒绝；全局默认若会让远端继承 fixed/crag，也会在保存前拒绝。远端已有显式原版覆盖，不妨碍本地继承槽使用 fixed。需要 caller system 无损保留与原生取证的业务继续放在本地 fixed 槽；本轮没有实现远端 fixed 的新分发/采集通路。
+
 
 控制面主动拨 SSH（出站 22），本机在 NAT 后也能接入；远端在 NAT 后时 `jump_node_id` 经已接入节点跳转。远端 Docker 走 SSH `direct-streamlocal` 转发 `/var/run/docker.sock`，dockerd 不开 TCP、远端不装 agent。
 

@@ -15,6 +15,7 @@ import { columnVisible, type HideableLogColumn } from './column-visibility'
 import {
   UNASSIGNED_EXECUTION,
   rowCost,
+  requestedThinkingSetting,
   showModelRedirect,
   statusBadge,
 } from './log-badges'
@@ -140,6 +141,7 @@ export function LogRow({
   const show = (id: HideableLogColumn) => columnVisible(hidden, id)
   const requested = row.requested_model || row.model
   const mismatch = showModelRedirect(row)
+  const thinkingSetting = requestedThinkingSetting(requested)
   const cacheWrite = Number(row.cache_creation_tokens) || 0
   const cacheRead = Number(row.cache_read_tokens) || 0
   const cost = rowCost(row)
@@ -182,6 +184,9 @@ export function LogRow({
           <TooltipContent>
             请求 {String(row.requested_model || row.model || '—')}
             {row.upstream_model ? ` · 上游 ${row.upstream_model}` : ''}
+            {thinkingSetting ? (
+              <div>{thinkingSetting.label}（请求值，非实际用量）</div>
+            ) : null}
           </TooltipContent>
         </Tooltip>
         <RedirectBadge row={row} />

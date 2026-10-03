@@ -34,27 +34,26 @@ export function selectCliNodePidsToKill(processes, liveTokens = []) {
 
 // $0 is "guard"; "$@" are live KIN_PANEL_SHELL tokens.
 const GUARD_SCRIPT = `
+is_cli() {
+  command=$(tr '\\0' '\\n' < "$1/cmdline" 2>/dev/null | head -n 1)
+  case "\${command##*/}" in cli-node|cli-node-fixed) return 0 ;; *) return 1 ;; esac
+}
+is_worker() {
+  grep -zEq '^CLAUDE_CODE_KIN_NATIVE_SLOTS=.+$' "$1/environ" 2>/dev/null && return 0
+  grep -zFxq -- '-p' "$1/cmdline" 2>/dev/null || grep -zFxq -- '--print' "$1/cmdline" 2>/dev/null
+}
 keep=
 for d in /proc/[0-9]*; do
+  is_cli "$d" || continue
+  is_worker "$d" || continue
   pid=\${d#/proc/}
-  cmd=$(tr '\\0' ' ' < "$d/cmdline" 2>/dev/null || true)
-  case "$cmd" in
-    *cli-node*' -p '*)
-      if [ -z "$keep" ] || [ "$pid" -lt "$keep" ]; then keep=$pid; fi
-      ;;
-  esac
+  if [ -z "$keep" ] || [ "$pid" -lt "$keep" ]; then keep=$pid; fi
 done
 for d in /proc/[0-9]*; do
   pid=\${d#/proc/}
   [ "$pid" = "$keep" ] && continue
-  cmd=$(tr '\\0' ' ' < "$d/cmdline" 2>/dev/null || true)
-  case "$cmd" in
-    *cli-node*) ;;
-    *) continue ;;
-  esac
-  case "$cmd" in
-    *cli-node*' -p '*) kill -KILL "$pid" 2>/dev/null || true; continue ;;
-  esac
+  is_cli "$d" || continue
+  if is_worker "$d"; then kill -KILL "$pid" 2>/dev/null || true; continue; fi
   panel=$(tr '\\0' '\\n' < "$d/environ" 2>/dev/null | sed -n 's/^KIN_PANEL_SHELL=//p' | head -n 1)
   if [ -n "$panel" ]; then
     for token in "$@"; do

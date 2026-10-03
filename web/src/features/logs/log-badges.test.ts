@@ -3,6 +3,7 @@ import {
   errorClassBadge,
   rateBadge,
   rowCost,
+  requestedThinkingSetting,
   showModelRedirect,
   statusBadge,
 } from './log-badges'
@@ -42,6 +43,42 @@ describe('rateBadge', () => {
 })
 
 describe('showModelRedirect', () => {
+  it('does not turn recognized Claude suffix normalization into a redirect, even in old rows', () => {
+    for (const suffix of ['60000', '10000', 'max', 'auto', 'none', '-1']) {
+      expect(
+        showModelRedirect({
+          requested_model: `claude-opus-4-6(${suffix})`,
+          upstream_model: 'claude-opus-4-6',
+          model_mismatch: 1,
+        })
+      ).toBe(false)
+    }
+    expect(
+      showModelRedirect({
+        requested_model: 'claude-opus-4-6(60000)',
+        upstream_model: 'claude-sonnet-4-6',
+        model_mismatch: 1,
+      })
+    ).toBe(true)
+    expect(
+      showModelRedirect({
+        requested_model: 'claude-opus-4-6(unsupported)',
+        upstream_model: 'claude-opus-4-6',
+      })
+    ).toBe(true)
+    expect(
+      showModelRedirect({
+        requested_model: 'unrelated(60000)',
+        upstream_model: 'unrelated',
+      })
+    ).toBe(true)
+    expect(
+      showModelRedirect({
+        requested_model: 'claude-opus-4-6(60000)',
+        model_mismatch: 1,
+      })
+    ).toBe(true)
+  })
   it('shows when the flag is set or the models differ', () => {
     expect(showModelRedirect({ model_mismatch: 1 })).toBe(true)
     expect(
@@ -57,6 +94,27 @@ describe('showModelRedirect', () => {
         model_mismatch: 0,
       })
     ).toBe(false)
+  })
+})
+
+describe('requestedThinkingSetting', () => {
+  it('labels requested budgets rather than asserting cloud execution or consumption', () => {
+    expect(requestedThinkingSetting('claude-opus-4-6(60000)')).toEqual({
+      model: 'claude-opus-4-6',
+      suffix: '60000',
+      label: '请求手动思考预算 60000 token',
+    })
+    expect(requestedThinkingSetting('claude-opus-4-6(0)')?.label).toBe(
+      '请求关闭思考'
+    )
+    expect(requestedThinkingSetting('claude-opus-4-6(-1)')?.label).toBe(
+      '请求自动思考'
+    )
+    expect(requestedThinkingSetting('claude-opus-4-6(max)')?.label).toBe(
+      '请求思考等级 max'
+    )
+    expect(requestedThinkingSetting('claude-opus-4-6(unsupported)')).toBeNull()
+    expect(requestedThinkingSetting('unrelated(60000)')).toBeNull()
   })
 })
 

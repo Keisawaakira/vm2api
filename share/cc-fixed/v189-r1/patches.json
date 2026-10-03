@@ -1,0 +1,14 @@
+{
+  "cc-node": [
+    {
+      "id": "native-max-tokens-terminal",
+      "offset": 108544372,
+      "bytes": 554,
+      "replacement_bytes": 433,
+      "before_sha256": "a8f05740be00f77198a0f0c6eb6d8b1652e0dafeab44ae3204966c3e145b8334",
+      "after_sha256": "48616d98e0b54f583d7cf74dcbaa652839206b59297b9ab5214b71ebd25185ab",
+      "before": "if (stopReason === \"max_tokens\") {\n              logEvent(\"tengu_max_tokens_reached\", {\n                max_tokens: maxOutputTokens\n              });\n              yield createAssistantAPIErrorMessage({\n                content: `${API_ERROR_MESSAGE_PREFIX}: Claude's response exceeded the ${maxOutputTokens} output token maximum. To configure this behavior, set the CLAUDE_CODE_MAX_OUTPUT_TOKENS environment variable.`,\n                apiError: \"max_output_tokens\",\n                error: \"max_output_tokens\"\n              });\n            }\n            ",
+      "after": "if(stopReason===\"max_tokens\"){logEvent(\"tengu_max_tokens_reached\",{max_tokens:maxOutputTokens});if(!isKinQuerySource(options2.querySource))yield createAssistantAPIErrorMessage({content:`${API_ERROR_MESSAGE_PREFIX}: Claude's response exceeded the ${maxOutputTokens} output token maximum. To configure this behavior, set the CLAUDE_CODE_MAX_OUTPUT_TOKENS environment variable.`,apiError:\"max_output_tokens\",error:\"max_output_tokens\"})}"
+    }
+  ]
+}

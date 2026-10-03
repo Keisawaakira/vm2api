@@ -11,7 +11,7 @@
  *
  * Official CC egresses via a local HTTP CONNECT bridge → slot SOCKS5.
  * Node never dials Anthropic.
- * After hello, quota is CLI /usage inside the slot (one try, then two retries).
+ * After official hello, quota is read by the existing slot worker OAuth usage operation.
  * Account tier comes from GET /api/oauth/profile via kin-worker oauth.
  */
 import { spawn, execFileSync } from 'node:child_process'
@@ -36,7 +36,15 @@ import {
 } from './oauth-credentials.mjs'
 import { canOfficialCc, credentialModeOfVm } from './credential-mode.mjs'
 import { ensureWorkerCredential } from '../transport/go-worker-client.mjs'
-import { inferTierFromOfficialStats, parseOfficialCcStats, tierFromOauthProfile } from './official-cc-stats.mjs'
+import {
+  inferTierFromOfficialStats,
+  parseOfficialCcStats,
+  tierFromOauthProfile,
+  officialCcOutputFailure,
+  officialStatsText,
+  sanitizeOfficialCcDiagnostic,
+} from './official-cc-stats.mjs'
+import { parseOAuthUsage, isCompleteOAuthUsage } from './crs-usage-probe.mjs'
 import { defaultSeedPolicy } from '../protocol/seed-policy.mjs'
 import { loadVmIdentity, persistVmSettings } from '../identity/vm-identity.mjs'
 import { applyOfficialFingerprintToVm, readOfficialCcIdentity } from '../identity/official-fingerprint.mjs'
@@ -615,9 +623,163 @@ export function dockerGatewayIp(vmId) {
   return '172.17.0.1'
 }
 
+function readDiagnosticFile(file) {
+  let fd
+  try {
+    const directory = fs.lstatSync(path.dirname(file))
+    if (!directory.isDirectory() || directory.isSymbolicLink())
+      throw Object.assign(Error('unsafe path'), { code: 'unsafe_path' })
+    if (fs.lstatSync(file).isSymbolicLink()) throw Object.assign(Error('unsafe link'), { code: 'unsafe_file' })
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0))
+    const stat = fs.fstatSync(fd)
+    if (!stat.isFile() || stat.nlink !== 1) throw Object.assign(Error('unsafe file'), { code: 'unsafe_file' })
+    const buffer = Buffer.alloc(Math.min(stat.size, 128 * 1024))
+    let total = 0
+    while (total < buffer.length) {
+      const read = fs.readSync(fd, buffer, total, buffer.length - total, null)
+      if (!read) break
+      total += read
+    }
+    return {
+      available: true,
+      bytes: stat.size,
+      mtime: stat.mtimeMs,
+      truncated: stat.size > total,
+      text: buffer.subarray(0, total).toString('utf8'),
+    }
+  } catch (error) {
+    return { available: false, bytes: 0, truncated: false, text: '', error_code: String(error?.code || 'read_error') }
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd)
+  }
+}
+
+function normalizeOfficialUsageResponse(response) {
+  const status = Number(response?.status) || 0
+  const body = response?.body && typeof response.body === 'object' && !Array.isArray(response.body) ? response.body : {}
+  const base = { source: 'official-cc-usage-worker', via: 'slot-worker', http_status: status }
+  const failure = officialCcOutputFailure(body)
+  // Direct OAuth responses must contain structured windows; CLI prose is only
+  // supported by the separate legacy diagnostic reader.
+  const usage = parseOAuthUsage(body)
+  const hasQuota = usage.five_hour || usage.seven_day || usage.seven_day_oi || usage.extra_usage?.utilization != null
+  const complete = isCompleteOAuthUsage(body, usage)
+  if (
+    response?.ok === true &&
+    Number.isInteger(status) &&
+    status >= 200 &&
+    status < 300 &&
+    !response.transportError &&
+    !failure &&
+    hasQuota
+  )
+    return {
+      ...usage,
+      ...base,
+      ok: true,
+      limits_present: complete,
+      account_tier: complete ? inferTierFromOfficialStats('', usage) : null,
+    }
+  const code =
+    failure?.code ||
+    (status >= 400 ? `usage_http_${status}` : status === 0 ? 'usage_transport_failed' : 'usage_output_unrecognized')
+  return {
+    ...base,
+    ok: false,
+    limits_present: false,
+    usage_error_code: code,
+    usage_error: sanitizeOfficialCcDiagnostic(
+      (failure?.message === 'Official CLI reported an error' ? failure.code : failure?.message) ||
+        (status >= 400
+          ? `Slot usage query returned HTTP ${status}`
+          : status === 0
+            ? 'Slot usage query did not receive an HTTP response'
+            : 'Slot usage response did not provide verified quota windows'),
+    ),
+  }
+}
+
+export function readOfficialUsageDiagnostics(homeDir, status) {
+  const stdout = readDiagnosticFile(path.join(homeDir, '.claude', 'kin-official-usage.json'))
+  let record = null
+  try {
+    const value = JSON.parse(stdout.text)
+    if (value?.type === 'official_usage_probe' && value.version === 1 && value.source === 'slot-worker-oauth')
+      record = value
+  } catch {}
+  const machine = !!record || status.usage_via === 'slot-worker'
+  const stderr = machine
+    ? { available: false, bytes: 0, truncated: false, text: '' }
+    : readDiagnosticFile(path.join(homeDir, '.claude', 'kin-official-usage.err'))
+  const started = Date.parse(status.started_at || ''),
+    finished = Date.parse(status.finished_at || '')
+  const stale = [stdout, stderr].some(
+    (file) =>
+      file.available &&
+      ((Number.isFinite(started) && file.mtime < started - 1000) ||
+        (Number.isFinite(finished) && file.mtime > finished + 5000)),
+  )
+  const payload = record ? record.response?.body : stdout.text
+  const parsed = stale
+    ? null
+    : machine
+      ? normalizeOfficialUsageResponse(record?.response)
+      : parseOfficialCcStats(payload)
+  const failure = stale
+    ? null
+    : machine
+      ? !record
+        ? {
+            code: stdout.available ? 'usage_record_invalid' : 'usage_output_missing',
+            message: 'No valid saved slot usage result is available',
+          }
+        : parsed?.usage_error
+          ? { code: parsed.usage_error_code, message: parsed.usage_error }
+          : null
+      : officialCcOutputFailure(payload)
+  const semantic = stale || failure ? '' : sanitizeOfficialCcDiagnostic(officialStatsText(payload), Infinity)
+  const textTruncated = semantic.length > 8192
+  const fileTruncated = stdout.truncated || stderr.truncated
+  const nowParsed = !fileTruncated && parsed?.ok === true && parsed?.limits_present === true
+  return {
+    source: machine ? 'existing_slot_worker_result' : 'existing_cli_files',
+    cli_exit_code: machine ? null : (status.exit_code ?? null),
+    ...(machine ? { http_status: record ? Number(record.response?.status) || 0 : null } : {}),
+    stdout_available: stdout.available,
+    stderr_available: stderr.available,
+    stdout_bytes: stdout.bytes,
+    stderr_bytes: stderr.bytes,
+    truncated: fileTruncated || textTruncated,
+    file_truncated: fileTruncated,
+    limits_present: !fileTruncated && parsed?.limits_present === true,
+    code: stale
+      ? 'usage_output_stale'
+      : failure?.code ||
+        (nowParsed ? 'usage_output_parsed' : !stdout.text ? 'usage_output_missing' : 'usage_output_unrecognized'),
+    message: stale
+      ? '保留文件时间与该次初装不一致，不能作为这次失败原因。'
+      : failure?.message ||
+        (nowParsed
+          ? '保留的额度结果现在已解析出完整窗口；这是历史数据，未重跑 hello、未更新初装状态。'
+          : !stdout.text
+            ? '未找到可用的 CLI /usage 输出。'
+            : 'CLI /usage 输出没有完整可识别的额度窗口，请查看实际文本；不等同于 hello 失败。'),
+    stdout_text: semantic.slice(0, 8192) || null,
+    stdout_text_chars: semantic.length,
+    stdout_text_truncated: textTruncated,
+    stdout_excerpt: semantic.slice(0, 600) || null,
+    stdout_excerpt_truncated: semantic.length > 600,
+    stderr_excerpt: stale ? null : sanitizeOfficialCcDiagnostic(stderr.text) || null,
+  }
+}
+
 export function readOfficialCcStatus(homeDir) {
   try {
-    return JSON.parse(fs.readFileSync(officialCcStatusPath(homeDir), 'utf8'))
+    const status = JSON.parse(fs.readFileSync(officialCcStatusPath(homeDir), 'utf8'))
+    if (status.error) status.error = sanitizeOfficialCcDiagnostic(status.error)
+    if (status.status === 'error' && status.hello_ok && !status.usage_ok && !status.stats_ok)
+      status.usage_diagnostics = readOfficialUsageDiagnostics(homeDir, status)
+    return status
   } catch {
     return null
   }
@@ -637,6 +799,10 @@ export function writeOfficialCcStatus(homeDir, status) {
     usage_ok: !!status.usage_ok,
     usage_source: status.usage_source || null,
     usage_via: status.usage_via || null,
+    usage_http_status: Number.isInteger(status.usage_http_status) ? status.usage_http_status : null,
+    usage_attempts:
+      Number.isSafeInteger(status.usage_attempts) && status.usage_attempts >= 0 ? status.usage_attempts : 0,
+    usage_limits_present: status.usage_limits_present === true,
     stats_ok: !!(status.stats_ok || status.usage_ok),
     plan_ok: !!(status.hello_ok || status.plan_ok),
     wiped: !!status.wiped,
@@ -660,7 +826,7 @@ export function writeOfficialCcStatus(homeDir, status) {
     resident_ok: status.resident_ok === true,
     resident_pid: Number.isFinite(Number(status.resident_pid)) ? Number(status.resident_pid) : null,
     bridge_port: Number.isFinite(Number(status.bridge_port)) ? Number(status.bridge_port) : null,
-    error: status.error ? String(status.error).slice(0, 300) : null,
+    error: status.error ? sanitizeOfficialCcDiagnostic(status.error).slice(0, 300) : null,
     force: !!status.force,
   }
   fs.writeFileSync(officialCcStatusPath(homeDir), JSON.stringify(safe, null, 2) + '\n', { mode: 0o600 })
@@ -1061,12 +1227,14 @@ export async function runOfficialCcTurn({
     raw = fs.readFileSync(outFile, 'utf8').trim()
     if (raw) parsed = JSON.parse(raw)
   } catch {}
-  const ok = finished.code === 0 && !finished.timed_out && !parsed?.is_error && !parsed?.error
+  const failure = officialCcOutputFailure(raw)
+  const ok = finished.code === 0 && !finished.timed_out && !parsed?.is_error && !parsed?.error && !failure
+  const stderr = ok ? '' : readDiagnosticFile(errFile).text
   return {
     ok,
     timed_out: !!finished.timed_out,
     code: finished.code,
-    error: finished.error || null,
+    error: sanitizeOfficialCcDiagnostic(finished.error || failure?.message || stderr) || null,
     parsed,
     raw_len: raw.length,
   }
@@ -1168,29 +1336,61 @@ export function writeOfficialCcTelemetry(projectRoot, vmId) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
-/**
- * Official `/usage` inside the slot (egress = slot SOCKS5 / transparent exit).
- * One try plus OFFICIAL_USAGE_RETRIES. A reply without the server limits[]
- * rows is retried too: that cached/seeded read is where Max loses Fable.
- */
+/** Subscription quotas come from the existing slot-local OAuth operation, not
+ * CLI print-mode session/cost output. No model generation or host HTTP client. */
 export async function runOfficialCcUsage({
-  turn,
+  exec,
   homeDir,
+  slotOauth,
   retries = OFFICIAL_USAGE_RETRIES,
   retryDelayMs = OFFICIAL_USAGE_RETRY_DELAY_MS,
 }) {
+  if (!exec?.vmId || !homeDir) throw new Error('VM and homeDir are required for the slot usage probe')
+  const call = slotOauth || (await import('../transport/slot-oauth.mjs')).runSlotOauth
   const outFile = path.join(homeDir, '.claude', 'kin-official-usage.json')
-  const errFile = path.join(homeDir, '.claude', 'kin-official-usage.err')
+  const maxRetries = Math.min(OFFICIAL_USAGE_RETRIES, Math.max(0, Math.floor(Number(retries) || 0)))
   let last = { turn: { ok: false, code: null, timed_out: false, error: null }, stats: null, attempts: 0 }
-  for (let attempt = 0; attempt <= retries; attempt++) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (attempt > 0 && retryDelayMs > 0) await sleep(retryDelayMs)
-    const result = await turn({ prompt: DEFAULT_USAGE_PROMPT, outFile, errFile })
-    let stats = null
+    let result
     try {
-      stats = parseOfficialCcStats(fs.readFileSync(outFile, 'utf8'))
-    } catch {}
-    last = { turn: result, stats, attempts: attempt + 1 }
-    if (stats?.ok && stats.limits_present) break
+      result = await call(exec, 'usage', { timeoutMs: 30_000 })
+    } catch (error) {
+      result = {
+        ok: false,
+        status: 0,
+        transportError: true,
+        body: { error: { code: 'worker_exec_failed', message: sanitizeOfficialCcDiagnostic(error?.message || error) } },
+      }
+    }
+    const response = {
+      ok: result?.ok === true,
+      status: Number(result?.status) || 0,
+      body: result?.body && typeof result.body === 'object' ? result.body : {},
+      transportError: result?.transportError === true,
+    }
+    const stats = normalizeOfficialUsageResponse(response)
+    // Parsed worker evidence, not original HTTP bytes. Do not copy headers.
+    const directory = fs.lstatSync(path.dirname(outFile))
+    if (!directory.isDirectory() || directory.isSymbolicLink()) throw new Error('Unsafe usage diagnostic directory')
+    atomicWriteJson(
+      outFile,
+      { type: 'official_usage_probe', version: 1, source: 'slot-worker-oauth', response },
+      { mode: 0o600 },
+    )
+    last = {
+      via: 'slot-worker',
+      turn: {
+        ok: stats.ok,
+        code: null,
+        http_status: response.status,
+        timed_out: stats.usage_error_code === 'worker_timeout',
+        error: stats.usage_error || null,
+      },
+      stats,
+      attempts: attempt + 1,
+    }
+    if ((stats.ok && stats.limits_present) || (response.status >= 400 && response.status < 500)) break
   }
   return last
 }
@@ -1377,7 +1577,7 @@ export async function runOfficialCcBootstrap(rawOpts = {}) {
       force,
       step: 'hello',
     })
-    const hello = await runOfficialCcTurn({
+    const hello = await runTurn({
       vmId,
       uid,
       gid,
@@ -1389,8 +1589,6 @@ export async function runOfficialCcBootstrap(rawOpts = {}) {
       timeoutMs,
     })
     helloOk = !!hello.ok
-    const turn = ({ prompt: text, outFile, errFile }) =>
-      runTurn({ vmId, uid, gid, timezone, locale, prompt: text, outFile, errFile, timeoutMs })
     writeOfficialCcStatus(homeDir, {
       status: 'running',
       vm_id: vmId,
@@ -1403,7 +1601,7 @@ export async function runOfficialCcBootstrap(rawOpts = {}) {
       step: 'usage',
     })
     const usageRun = hello.ok
-      ? await runOfficialCcUsage({ turn, homeDir, retryDelayMs })
+      ? await runOfficialCcUsage({ exec: { vmId, homeDir, vm }, homeDir, slotOauth, retryDelayMs })
       : { turn: { ok: false, code: null, timed_out: false, error: null }, stats: null, attempts: 0 }
     const statsTurn = usageRun.turn
     let stats = usageRun.stats
@@ -1492,7 +1690,8 @@ export async function runOfficialCcBootstrap(rawOpts = {}) {
       started_at: startedAt,
       finished_at: new Date().toISOString(),
       claude_version: installed.version,
-      exit_code: hello.ok ? (statsTurn.code ?? (usageOk ? 0 : 1)) : hello.code,
+      exit_code: hello.ok ? statsTurn.code : hello.code,
+      usage_http_status: statsTurn.http_status ?? null,
       hello_ok: hello.ok,
       usage_ok: usageOk,
       usage_source: stats?.source || null,

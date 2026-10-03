@@ -167,14 +167,16 @@ test('dropWebSearchFlag and sanitize drop the KIN-only top key', () => {
   assert.equal(Object.prototype.hasOwnProperty.call(copyOfficialAnthropicFields(body), 'web_search'), false)
 })
 
-test('openai.chat convert injects mapped search then caller can ensure', () => {
+test('CPA Chat drops native search declarations without changing generic/native search helpers', () => {
   const { claude } = toClaudeMessages('openai.chat', {
     model: 'claude-haiku-4-5-20251001',
     messages: [{ role: 'user', content: 'news?' }],
     tools: [{ type: 'web_search' }],
   })
-  assert.ok(hasClaudeWebSearch(claude.tools))
-  assert.deepEqual(claude.tools[0], CLAUDE_WEB_SEARCH_TOOL)
+  assert.equal(claude.tools, undefined)
+  assert.equal(hasClaudeWebSearch(claude.tools), false)
+  assert.deepEqual(openaiToolsToClaude([{ type: 'web_search' }]), [CLAUDE_WEB_SEARCH_TOOL])
+  assert.deepEqual(ensureClaudeWebSearch(claude).tools, [CLAUDE_WEB_SEARCH_TOOL])
 })
 
 test('rewriteToolNames skips Anthropic server tools', () => {

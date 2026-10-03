@@ -5,7 +5,7 @@
  * KIN is an OAuth proxy — this is the official standard cost of the tokens
  * that went through the gateway, not Claude Code included-quota or extra-usage.
  */
-import { normalizeCacheTtl } from '../protocol/cache-ttl.mjs'
+import { cacheCreationUsage } from '../protocol/cache-usage.mjs'
 import { extractOpenaiUsage } from '../protocol/openai-usage.mjs'
 import { OPENAI_PRICING_SOURCE, resolveOpenaiOfficialRates, selectOpenaiRates } from './openai-pricing.mjs'
 
@@ -189,8 +189,9 @@ export function calculateCost(usage = {}, model = null) {
   let rates = resolved.rates
   const outputTokens = n(u.output_tokens)
   const cacheRead = n(u.cache_read_tokens)
-  let cache5m = n(u.cache_creation_5m_tokens ?? u.cache_creation?.ephemeral_5m_input_tokens)
-  let cache1h = n(u.cache_creation_1h_tokens ?? u.cache_creation?.ephemeral_1h_input_tokens)
+  const cacheUsage = cacheCreationUsage(u)
+  const cache5m = cacheUsage.cache_creation_5m_tokens
+  const cache1h = cacheUsage.cache_creation_1h_tokens
   const cacheCreate = n(u.cache_creation_tokens)
   const inputTokens = n(u.input_tokens)
 
@@ -241,14 +242,6 @@ export function calculateCost(usage = {}, model = null) {
     }
   }
 
-  if (!cache5m && !cache1h && cacheCreate) {
-    if (normalizeCacheTtl(u.cache_ttl) === '1h') cache1h = cacheCreate
-    else cache5m = cacheCreate
-  } else if (normalizeCacheTtl(u.cache_ttl) === '1h' && cache5m && !cache1h) {
-    cache1h = cache5m
-    cache5m = 0
-  }
-
   if (!rates) {
     return emptyCost({
       model: mid || null,
@@ -257,8 +250,7 @@ export function calculateCost(usage = {}, model = null) {
       input_tokens: inputTokens,
       output_tokens: outputTokens,
       cache_read_tokens: cacheRead,
-      cache_creation_5m_tokens: cache5m,
-      cache_creation_1h_tokens: cache1h,
+      ...cacheUsage,
     })
   }
 
@@ -273,7 +265,9 @@ export function calculateCost(usage = {}, model = null) {
   const cache_read_cost = usd(cacheRead, rates.cache_read)
   const cache_creation_5m_cost = usd(cache5m, rates.cache_5m)
   const cache_creation_1h_cost = usd(cache1h, rates.cache_1h)
-  const cache_creation_cost = cache_creation_5m_cost + cache_creation_1h_cost
+  // Missing split: conservative 5m estimate, kept separate from observed buckets.
+  const cache_creation_unclassified_cost = usd(cacheUsage.cache_creation_unclassified_tokens, rates.cache_5m)
+  const cache_creation_cost = cache_creation_5m_cost + cache_creation_1h_cost + cache_creation_unclassified_cost
   const total_cost = input_cost + output_cost + cache_read_cost + cache_creation_cost
 
   return {
@@ -288,8 +282,8 @@ export function calculateCost(usage = {}, model = null) {
     input_tokens: inputTokens,
     output_tokens: outputTokens,
     cache_read_tokens: cacheRead,
-    cache_creation_5m_tokens: cache5m,
-    cache_creation_1h_tokens: cache1h,
+    ...cacheUsage,
+    cache_creation_unclassified_cost: round8(cache_creation_unclassified_cost),
     input_cost: round8(input_cost),
     output_cost: round8(output_cost),
     cache_read_cost: round8(cache_read_cost),

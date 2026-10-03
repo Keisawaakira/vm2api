@@ -36,6 +36,148 @@ import {
   buildOfficialCcResidentDockerArgs,
 } from '../../src/lib/oauth/official-cc-bootstrap.mjs'
 
+test('refreshing an old usage failure exposes sanitized existing diagnostics without rerunning CLI', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-usage-diagnostic-'))
+  try {
+    fs.mkdirSync(path.join(home, '.claude'), { recursive: true })
+    writeOfficialCcStatus(home, {
+      status: 'error',
+      step: 'usage',
+      hello_ok: true,
+      usage_ok: false,
+      usage_attempts: 3,
+      usage_limits_present: false,
+      exit_code: 1,
+      error: 'official claude hello=0 usage=fail',
+    })
+    fs.writeFileSync(
+      path.join(home, '.claude', 'kin-official-usage.json'),
+      JSON.stringify({
+        type: 'result',
+        is_error: true,
+        subtype: 'error_during_execution',
+        errors: ['HTTP 403: user:profile missing; Bearer sk-ant-oat01-SECRET'],
+      }),
+    )
+    fs.writeFileSync(
+      path.join(home, '.claude', 'kin-official-usage.err'),
+      'proxy http://NAME:PASSWORD@127.0.0.1:8080 refused',
+    )
+    const status = readOfficialCcStatus(home)
+    assert.equal(status.status, 'error')
+    assert.equal(status.hello_ok, true)
+    assert.equal(status.usage_attempts, 3)
+    assert.equal(status.usage_diagnostics.code, 'error_during_execution')
+    assert.match(status.usage_diagnostics.message, /user:profile missing/)
+    assert.doesNotMatch(JSON.stringify(status.usage_diagnostics), /sk-ant-oat01-SECRET|NAME:PASSWORD/)
+    assert.equal(status.usage_diagnostics.cli_exit_code, 1)
+    assert.ok(status.usage_diagnostics.stdout_bytes > 0)
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('usage diagnostics never infer success from missing or unrecognized output', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-usage-missing-'))
+  try {
+    writeOfficialCcStatus(home, {
+      status: 'error',
+      step: 'usage',
+      hello_ok: true,
+      usage_ok: false,
+      error: 'usage=failed',
+    })
+    let status = readOfficialCcStatus(home)
+    assert.equal(status.usage_diagnostics.code, 'usage_output_missing')
+    fs.writeFileSync(
+      path.join(home, '.claude', 'kin-official-usage.json'),
+      '{"type":"result","result":"not a quota report"}',
+    )
+    status = readOfficialCcStatus(home)
+    assert.equal(status.status, 'error')
+    assert.equal(status.usage_diagnostics.code, 'usage_output_unrecognized')
+    assert.match(status.usage_diagnostics.stdout_excerpt, /not a quota report/)
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('existing usage diagnostics reject linked files and mark bounded or stale evidence', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-usage-bounds-'))
+  try {
+    writeOfficialCcStatus(home, {
+      status: 'error',
+      step: 'usage',
+      hello_ok: true,
+      usage_ok: false,
+      error: 'usage=failed',
+    })
+    const output = path.join(home, '.claude', 'kin-official-usage.json')
+    const outside = path.join(home, 'unrelated')
+    fs.writeFileSync(outside, '{"error":{"message":"NEVER_READ_LINKED_CONTENT"}}')
+    fs.linkSync(outside, output)
+    let diagnostic = readOfficialCcStatus(home).usage_diagnostics
+    assert.equal(diagnostic.stdout_available, false)
+    assert.doesNotMatch(JSON.stringify(diagnostic), /NEVER_READ/)
+    fs.unlinkSync(output)
+    fs.writeFileSync(output, 'x'.repeat(160 * 1024))
+    diagnostic = readOfficialCcStatus(home).usage_diagnostics
+    assert.equal(diagnostic.stdout_bytes, 160 * 1024)
+    assert.equal(diagnostic.truncated, true)
+    writeOfficialCcStatus(home, {
+      status: 'error',
+      step: 'usage',
+      hello_ok: true,
+      usage_ok: false,
+      started_at: '2000-01-01T00:00:00Z',
+      finished_at: '2000-01-01T00:01:00Z',
+      error: 'usage=failed',
+    })
+    assert.equal(readOfficialCcStatus(home).usage_diagnostics.code, 'usage_output_stale')
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('usage diagnostics extract the full semantic text and distinguish excerpt clipping from file reads', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-usage-semantic-'))
+  try {
+    writeOfficialCcStatus(home, {
+      status: 'error',
+      step: 'usage',
+      hello_ok: true,
+      usage_ok: false,
+      error: 'usage=failed',
+    })
+    const quota =
+      'You are currently using your subscription.\n' +
+      'neutral detail '.repeat(60) +
+      '\nCurrent session: 5% used\nCurrent week (all models): 40% used\nCurrent week (Fable): 21% used'
+    const raw = [
+      JSON.stringify({ type: 'system', subtype: 'init', ignored: 'DO_NOT_EXPORT_INIT' }),
+      JSON.stringify({
+        type: 'assistant',
+        message: { model: '<synthetic>', content: [{ type: 'text', text: quota }] },
+      }),
+      JSON.stringify({ type: 'result', result: '' }),
+    ].join('\n')
+    fs.writeFileSync(path.join(home, '.claude', 'kin-official-usage.json'), raw)
+    const status = readOfficialCcStatus(home)
+    const d = status.usage_diagnostics
+    assert.equal(status.status, 'error', 'reading old output must not rewrite historical state')
+    assert.equal(d.code, 'usage_output_parsed')
+    assert.equal(d.limits_present, true)
+    assert.match(d.stdout_text, /Current week \(Fable\): 21%/)
+    assert.doesNotMatch(d.stdout_text, /DO_NOT_EXPORT_INIT|"content"/)
+    assert.equal(d.file_truncated, false)
+    assert.equal(d.stdout_text_truncated, false)
+    assert.equal(d.stdout_excerpt_truncated, true)
+    assert.equal(d.stdout_excerpt.length, 600)
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true })
+  }
+})
+
 test('uid follows vm index', () => {
   assert.deepEqual(officialCcUidGid('vm-30'), { uid: 10030, gid: 987 })
 })
@@ -667,51 +809,43 @@ test('Node boot restores dead residents without another hello', async () => {
   fs.rmSync(root, { recursive: true, force: true })
 })
 
-function usageLines(limits) {
-  return [
-    JSON.stringify({ type: 'assistant', usage_report: { rate_limits: { limits } } }),
-    JSON.stringify({ type: 'result', result: 'ok' }),
-  ].join('\n')
-}
-
-test('slot /usage retries at most twice when limits[] is missing', async () => {
+test('slot usage retries at most twice when complete windows are missing', async (t) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-cc-usage-'))
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }))
   fs.mkdirSync(path.join(home, '.claude'), { recursive: true })
-  const prompts = []
-  const turn = async ({ prompt, outFile }) => {
-    prompts.push(prompt)
-    fs.writeFileSync(outFile, usageLines(null))
-    return { ok: true, code: 0, timed_out: false }
+  const operations = []
+  const slotOauth = async (_exec, op) => {
+    operations.push(op)
+    return { ok: true, status: 200, body: { five_hour: { utilization: 10 } } }
   }
-  const run = await runOfficialCcUsage({ turn, homeDir: home, retryDelayMs: 0 })
+  const run = await runOfficialCcUsage({ exec: { vmId: 'vm-01' }, slotOauth, homeDir: home, retryDelayMs: 0 })
   assert.equal(run.attempts, OFFICIAL_USAGE_RETRIES + 1)
-  assert.deepEqual(prompts, ['/usage', '/usage', '/usage'])
+  assert.deepEqual(operations, ['usage', 'usage', 'usage'])
   assert.equal(run.stats.limits_present, false)
-  fs.rmSync(home, { recursive: true, force: true })
 })
 
-test('slot /usage stops once Fable limits arrive', async () => {
+test('slot usage stops once complete Fable quota data arrives', async (t) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-cc-usage-'))
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }))
   fs.mkdirSync(path.join(home, '.claude'), { recursive: true })
   let n = 0
-  const turn = async ({ outFile }) => {
-    n += 1
-    fs.writeFileSync(
-      outFile,
-      n === 1
-        ? 'boom'
-        : usageLines([
-            { kind: 'session', percent: 10, resets_at: null },
-            { kind: 'weekly_all', percent: 30, resets_at: null },
-            { kind: 'weekly_scoped', percent: 21, resets_at: null, scope: { model: { display_name: 'Fable' } } },
-          ]),
-    )
-    return { ok: n > 1, code: n > 1 ? 0 : 1, timed_out: false }
+  const slotOauth = async () => {
+    n++
+    return n === 1
+      ? { ok: false, status: 503, body: { error: 'temporary failure' } }
+      : {
+          ok: true,
+          status: 200,
+          body: {
+            five_hour: { utilization: 10 },
+            seven_day: { utilization: 30 },
+            limits: [{ kind: 'weekly_scoped', percent: 21, scope: { model: { display_name: 'Fable' } } }],
+          },
+        }
   }
-  const run = await runOfficialCcUsage({ turn, homeDir: home, retryDelayMs: 0 })
+  const run = await runOfficialCcUsage({ exec: { vmId: 'vm-01' }, slotOauth, homeDir: home, retryDelayMs: 0 })
   assert.equal(run.attempts, 2)
   assert.equal(run.stats.seven_day_oi.utilization, 0.21)
-  fs.rmSync(home, { recursive: true, force: true })
 })
 
 test('collectOfficialCcAccount reads tier from profile and model ids via slot worker', async () => {
