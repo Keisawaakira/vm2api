@@ -12,6 +12,7 @@ const { Server, utils } = ssh2
 test('remote atomic writes preserve UTF-8 byte offsets and do not follow destination symlinks', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-sftp-write-'))
   const handles = new Map()
+  const modes = []
   const connections = new Set()
   const server = new Server({ hostKeys: [utils.generateKeyPairSync('ed25519').private] }, (conn) => {
     connections.add(conn)
@@ -42,7 +43,12 @@ test('remote atomic writes preserve UTF-8 byte offsets and do not follow destina
         sftp.on('WRITE', (id, h, position, data) =>
           reply(id, () => fs.writeSync(handles.get(h.toString()), data, 0, data.length, position)),
         )
-        sftp.on('FSETSTAT', (id, h, attrs) => reply(id, () => fs.fchmodSync(handles.get(h.toString()), attrs.mode)))
+        sftp.on('FSETSTAT', (id, h, attrs) =>
+          reply(id, () => {
+            modes.push(attrs.mode)
+            fs.fchmodSync(handles.get(h.toString()), attrs.mode)
+          }),
+        )
         sftp.on('CLOSE', (id, h) =>
           reply(id, () => {
             fs.closeSync(handles.get(h.toString()))
@@ -83,12 +89,15 @@ test('remote atomic writes preserve UTF-8 byte offsets and do not follow destina
   fs.writeFileSync(sibling, 'other slot must stay unchanged')
   fs.symlinkSync(sibling, file)
   const text = JSON.stringify({ note: '出口🙂'.repeat(10000), listen_tcp: '127.0.0.1:21000' }) + '\n'
-  await writeRemoteFile(sftp, file, text)
+  // SFTP uses slash-separated remote paths even when this loopback fixture runs on Windows.
+  const remoteFile = file.replaceAll('\\', '/')
+  await writeRemoteFile(sftp, remoteFile, text)
   assert.equal(fs.readFileSync(file, 'utf8'), text)
-  assert.equal(fs.statSync(file).mode & 0o777, 0o600)
+  assert.ok(modes.includes(0o600), 'the remote chmod request must retain private permissions')
+  if (process.platform !== 'win32') assert.equal(fs.statSync(file).mode & 0o777, 0o600)
   assert.equal(fs.readFileSync(sibling, 'utf8'), 'other slot must stay unchanged')
   const binary = Buffer.from([0, 255, 128, 1])
-  await writeRemoteFile(sftp, file, binary)
+  await writeRemoteFile(sftp, remoteFile, binary)
   assert.deepEqual(fs.readFileSync(file), binary)
   assert.deepEqual(fs.readdirSync(root).sort(), ['egress.json', 'other-slot.json'])
 })

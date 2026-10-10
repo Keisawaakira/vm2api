@@ -343,10 +343,14 @@ test('OpenAI chat usage carries prompt_tokens_details cache breakdown', () => {
   assert.equal(out.usage.prompt_tokens, 20)
   assert.equal(out.usage.completion_tokens, 4)
   assert.equal(out.usage.total_tokens, 24)
-  assert.deepEqual(out.usage.prompt_tokens_details, { cached_tokens: 3, cache_creation_tokens: 7 })
+  assert.deepEqual(out.usage.prompt_tokens_details, {
+    cached_tokens: 3,
+    cached_creation_tokens: 7,
+    cache_write_tokens: 7,
+  })
 })
 
-test('OpenAI chat usage omits details when no cache tokens', () => {
+test('OpenAI chat usage includes zero cache details when usage is present', () => {
   const claude = {
     id: 'msg_1',
     model: 'claude-haiku-4-5-20251001',
@@ -355,7 +359,14 @@ test('OpenAI chat usage omits details when no cache tokens', () => {
     usage: { input_tokens: 10, output_tokens: 4 },
   }
   const out = fromClaudeToOpenAIChat(claude, 'claude-haiku-4-5-20251001', 'vm-1', 'convert')
-  assert.equal(out.usage.prompt_tokens_details, undefined)
+  assert.deepEqual(out.usage.prompt_tokens_details, {
+    cached_tokens: 0,
+    cached_creation_tokens: 0,
+    cache_write_tokens: 0,
+  })
+  assert.equal(out.usage.prompt_tokens, 10)
+  assert.equal(out.usage.completion_tokens, 4)
+  assert.equal(out.usage.total_tokens, 14)
 })
 
 test('OpenAI responses usage carries input_tokens_details cache breakdown', () => {
@@ -372,10 +383,13 @@ test('OpenAI responses usage carries input_tokens_details cache breakdown', () =
   assert.deepEqual(out.usage.input_tokens_details, { cached_tokens: 2 })
 })
 
-test('OpenAI response_format.json_schema maps to output_config', () => {
+test('OpenAI Chat response_format.json_schema appends a separate system instruction', () => {
   const { claude } = toClaudeMessages('openai.chat', {
     model: 'claude-sonnet-5',
-    messages: [{ role: 'user', content: 'color' }],
+    messages: [
+      { role: 'system', content: 'Caller color rules stay separate.' },
+      { role: 'user', content: 'color' },
+    ],
     max_tokens: 64,
     response_format: {
       type: 'json_schema',
@@ -385,9 +399,13 @@ test('OpenAI response_format.json_schema maps to output_config', () => {
       },
     },
   })
-  assert.equal(claude.output_config.format.type, 'json_schema')
-  assert.equal(claude.output_config.format.name, 'colors')
-  assert.equal(claude.output_config.format.schema.properties.top_left.type, 'string')
+  assert.equal(claude.output_config?.format, undefined)
+  assert.equal(claude.system.length, 2)
+  assert.deepEqual(claude.system[0], { type: 'text', text: 'Caller color rules stay separate.' })
+  assert.match(claude.system[1].text, /^You must format your entire response as valid JSON/)
+  assert.match(claude.system[1].text, /Schema Name: colors\n/)
+  const schemaText = claude.system[1].text.split('JSON Schema:\n')[1].split('\nDo not include')[0]
+  assert.equal(JSON.parse(schemaText).properties.top_left.type, 'string')
 })
 
 test('OpenAI chat maps Anthropic refusal instead of silent stop', () => {
@@ -403,7 +421,7 @@ test('OpenAI chat maps Anthropic refusal instead of silent stop', () => {
   )
   assert.equal(out.choices[0].finish_reason, 'content_filter')
   assert.equal(out.choices[0].message.refusal, 'no')
-  assert.equal(out.choices[0].message.content, 'no')
+  assert.equal(out.choices[0].message.content, '')
 })
 
 test('OpenAI response_format survives Anthropic sanitize as output_config', () => {
@@ -431,7 +449,7 @@ test('test14 OpenAI tools on /v1/messages convert to Anthropic get_weather', () 
   assert.equal(claude.tool_choice.name, 'get_weather')
 })
 
-test('test14 OpenAI chat records features and converts to official 4-block', () => {
+test('test14 Chat retains features and explicit persona helper still builds official 4-block', () => {
   const { claude } = toClaudeMessages('openai.chat', TEST14_OPENAI_INBOUND)
   const features = extractCaseFeatures(claude)
   assert.ok(matchesTest14Features(features))
@@ -482,5 +500,9 @@ test('test14 OpenAI chat records features and converts to official 4-block', () 
   assert.equal(back.choices[0].finish_reason, 'tool_calls')
   assert.equal(back.choices[0].message.tool_calls[0].function.name, 'get_weather')
   assert.equal(back.usage.prompt_tokens, userKeep + 9078)
-  assert.deepEqual(back.usage.prompt_tokens_details, { cache_creation_tokens: 9078 })
+  assert.deepEqual(back.usage.prompt_tokens_details, {
+    cached_tokens: 0,
+    cached_creation_tokens: 9078,
+    cache_write_tokens: 9078,
+  })
 })

@@ -34,7 +34,8 @@ def escaped(data):
     return "".join("\\x%02x" % byte for byte in data)
 
 
-CONF_BYTES = (f":{NAME}:M::{escaped(MAGIC)}:{escaped(MASK)}:{QEMU}:POCF\n").encode("ascii")
+# This is a Linux binfmt descriptor even when inspected on a non-Linux host.
+CONF_BYTES = (f":{NAME}:M::{escaped(MAGIC)}:{escaped(MASK)}:{QEMU.as_posix()}:POCF\n").encode("ascii")
 
 
 class PrepareError(RuntimeError):

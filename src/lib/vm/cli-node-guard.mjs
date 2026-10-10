@@ -16,15 +16,21 @@ import { slotHost } from './slot-host.mjs'
 
 export const CLI_NODE_GUARD_INTERVAL_MS = 15_000
 
-// $0 is "guard"; "$@" are live KIN_PANEL_SHELL tokens. KIN_GUARD_PROC is a test seam.
+// Exact argv identity, not prompt/script text. KIN_GUARD_PROC is a test seam.
 export const GUARD_SCRIPT = `
 proc=\${KIN_GUARD_PROC:-/proc}
+is_cli() {
+  command=$(tr '\\0' '\\n' < "$1/cmdline" 2>/dev/null | head -n 1)
+  case "\${command##*/}" in
+    qemu-x86_64|qemu-x86_64-static) command=$(tr '\\0' '\\n' < "$1/cmdline" 2>/dev/null | sed -n '2p') ;;
+  esac
+  case "\${command##*/}" in cli-node|cli-node-fixed) return 0 ;; *) return 1 ;; esac
+}
 keep=
 prefer=
 for d in "$proc"/[0-9]*; do
+  is_cli "$d" || continue
   pid=\${d##*/}
-  cmd=$(tr '\\0' ' ' < "$d/cmdline" 2>/dev/null || true)
-  case "$cmd" in *cli-node*) ;; *) continue ;; esac
   env=$(tr '\\0' '\\n' < "$d/environ" 2>/dev/null) || continue
   if printf '%s\\n' "$env" | grep -q '^CLAUDE_CODE_NATIVE_SLOTS='; then
     if [ -z "$prefer" ] || [ "$pid" -lt "$prefer" ]; then prefer=$pid; fi
@@ -36,8 +42,7 @@ keep=\${prefer:-$keep}
 for d in "$proc"/[0-9]*; do
   pid=\${d##*/}
   [ "$pid" = "$keep" ] && continue
-  cmd=$(tr '\\0' ' ' < "$d/cmdline" 2>/dev/null || true)
-  case "$cmd" in *cli-node*) ;; *) continue ;; esac
+  is_cli "$d" || continue
   env=$(tr '\\0' '\\n' < "$d/environ" 2>/dev/null) || continue
   [ -n "$env" ] || continue
   if printf '%s\\n' "$env" | grep -q -e '^CLAUDE_CODE_NATIVE_SLOTS=' -e '^CLAUDE_CODE_KIN_NATIVE_SLOTS='; then

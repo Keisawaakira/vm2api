@@ -362,7 +362,10 @@ test('generate-auth-url claude_code flavor then exchange-code', async () => {
     assert.equal(out.flavor, 'claude_code')
     const vm = JSON.parse(fs.readFileSync(path.join(gw.project, 'vms', 'vm-sim-01.json'), 'utf8'))
     assert.match(vm.claude.scope, /user:sessions:claude_code/)
-    assert.doesNotMatch(vm.claude.scope, /user:file_upload/)
+    // The current full-OAuth contract is shared by cai/claude_code flavors;
+    // inference-only official setup-token is covered separately above.
+    assert.match(vm.claude.scope, /user:file_upload/)
+    assert.equal(vm.claude.scope, new URL(data.auth_url).searchParams.get('scope'))
   } finally {
     await gw.stop()
   }

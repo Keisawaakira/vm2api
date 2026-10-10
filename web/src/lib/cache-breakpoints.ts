@@ -5,14 +5,14 @@
  * 与 persona-template.ts 同样是**契约副本**：归一化规则抄错不会报错，只会让
  * 面板显示的状态和网关实际注入的断点对不上。
  *
- * 公开仓只走 rust cli-hop：wrap CLI 拥有 tools/system 断点，gateway 剥光
- * tools/system/messages 上的 cache_control，kernel 按 Claude Code 重打
- * conversation。`cache_ttl` 给出站断点定时。`enabled=false` 时只剥 last user。
+ * HTTP cache_ttl 仅补缺失 TTL，显式 TTL 保留；auto 根据凭证选择默认。
+ * cli-hop 清理入站标记，由 native CLI 按槽配置生成最终缓存前缀。
  */
 
-export type CacheTtl = '1h' | '5m'
+export type CacheTtl = 'auto' | '1h' | '5m'
 
-export type MessagesBreakpointMode = 'off' | 'fill' | 'rewrite' | 'cli-hop'
+export type MessagesBreakpointMode =
+  'off' | 'fill' | 'rewrite' | 'tail' | 'cli-hop'
 
 export type CacheBreakpoints = {
   enabled: boolean
@@ -22,9 +22,10 @@ export type CacheBreakpoints = {
   messages: MessagesBreakpointMode
 }
 
-export const DEFAULT_CACHE_TTL: CacheTtl = '1h'
+export const DEFAULT_CACHE_TTL: CacheTtl = 'auto'
 
 export const CACHE_TTL_OPTIONS: [CacheTtl, string][] = [
+  ['auto', '自动（按凭证）'],
   ['1h', '1 小时'],
   ['5m', '5 分钟'],
 ]
@@ -34,12 +35,13 @@ export const DEFAULT_CACHE_BREAKPOINTS: CacheBreakpoints = {
   preserve_client: true,
   system_tail: true,
   tools_tail: true,
-  messages: 'rewrite',
+  messages: 'fill',
 }
 
 export const MESSAGES_BREAKPOINT_OPTIONS: [MessagesBreakpointMode, string][] = [
   ['fill', '补齐'],
-  ['rewrite', '重打'],
+  ['rewrite', '兼容补齐'],
+  ['tail', '仅尾块'],
   ['cli-hop', 'cli-hop'],
   ['off', '不动'],
 ]
@@ -47,17 +49,20 @@ export const MESSAGES_BREAKPOINT_OPTIONS: [MessagesBreakpointMode, string][] = [
 export function messagesModeExplain(mode: MessagesBreakpointMode): string {
   if (mode === 'off')
     return '不碰 messages。调用方自己打的断点照旧生效，网关只管 system 和 tools。'
+  if (mode === 'tail')
+    return '显式单尾模式：清理 messages 旧标记，只标记当前尾部的最后一个非 thinking 块。'
   if (mode === 'rewrite')
-    return '先清掉调用方在 messages 里的全部断点，再打最后一条；messages≥4 时再打倒数第二个 user。'
+    return '兼容旧设置：保留已有断点，只补最后一个可缓存消息，不再清空重打。'
   if (mode === 'cli-hop')
-    return '剥光 messages 上的 cache_control。kernel 按 Claude Code 重打 conversation 断点。'
-  return '只在 messages 一个断点都没有时补齐。已经自己打过断点的客户端保持原样。'
+    return '保留调用方 messages 断点，不在 Node 新增；由 kernel/CLI 处理新增断点。'
+  return '保留历史断点，只在最后一个可缓存消息没有断点时补齐。'
 }
 
 export function normalizeCacheTtl(value: unknown): CacheTtl {
   const raw = String(value ?? '')
     .trim()
     .toLowerCase()
+  if (!raw || raw === 'auto') return 'auto'
   if (raw === '5m' || raw === '5min' || raw === '300') return '5m'
   if (
     raw === '1h' ||
@@ -92,6 +97,7 @@ export function normalizeMessagesBreakpointMode(
     .toLowerCase()
   if (['off', 'none', 'false', '0', 'disabled'].includes(raw)) return 'off'
   if (['cli-hop', 'cli', 'leftover'].includes(raw)) return 'cli-hop'
+  if (['tail', 'current-tail', 'single'].includes(raw)) return 'tail'
   if (['rewrite', 'replace', 'restamp', 'auto'].includes(raw)) return 'rewrite'
   if (['fill', 'true', '1'].includes(raw)) return 'fill'
   return DEFAULT_CACHE_BREAKPOINTS.messages

@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import http from 'node:http'
 import { startGateway, api } from '../harness.mjs'
 
 async function login(gw, username, password) {
@@ -216,6 +217,63 @@ test('super can toggle schedule but cannot import or delete VMs', async () => {
       body: { access_token: 'sk-ant-oat01-DENIED' },
     })
     assert.equal(credPut.status, 403)
+  } finally {
+    await gw.stop()
+  }
+})
+
+test('slot terminal tickets stay admin-only without opening Docker', async () => {
+  const gw = await startGateway()
+  try {
+    const admin = await login(gw, 'admin', 'testpass')
+    const route = '/api/panel/vms/vm-sim-01/shell-ticket'
+    assert.equal((await panel(gw, 'POST', route)).status, 401)
+    for (const role of ['user', 'super']) {
+      await panel(gw, 'POST', '/api/panel/users', {
+        cookie: admin.cookie,
+        body: { username: `shell-${role}`, password: 'shell-reader-pass', role },
+      })
+      const user = await login(gw, `shell-${role}`, 'shell-reader-pass')
+      assert.equal(user.status, 200)
+      const denied = await panel(gw, 'POST', route, { cookie: user.cookie })
+      assert.equal(denied.status, 403)
+      assert.equal(denied.json.data?.ticket, undefined)
+    }
+    const issued = await panel(gw, 'POST', route, { cookie: admin.cookie })
+    assert.equal(issued.status, 200, issued.text)
+    const data = issued.json.data || issued.json
+    assert.match(data.ticket, /^[\w-]{32}$/)
+    assert.equal(data.expires_in, 30)
+  } finally {
+    await gw.stop()
+  }
+})
+
+test('invalid unauthenticated terminal upgrade is rejected and the gateway stays alive', async () => {
+  const gw = await startGateway()
+  try {
+    const status = await new Promise((resolve, reject) => {
+      const req = http.get(
+        gw.baseUrl + '/api/panel/vms/%ZZ/shell',
+        {
+          headers: { Connection: 'Upgrade', Upgrade: 'websocket' },
+        },
+        (res) => {
+          res.resume()
+          resolve(res.statusCode)
+        },
+      )
+      req.on('upgrade', (_res, socket) => {
+        socket.destroy()
+        reject(new Error('unexpected terminal upgrade'))
+      })
+      req.on('error', reject)
+      req.setTimeout(2000, () => req.destroy(new Error('fixture upgrade timeout')))
+    })
+    assert.equal(status, 400)
+    assert.equal(gw.child.exitCode, null)
+    const healthy = await fetch(gw.baseUrl + '/health')
+    assert.equal(healthy.status, 200)
   } finally {
     await gw.stop()
   }

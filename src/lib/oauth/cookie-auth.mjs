@@ -236,6 +236,9 @@ export async function exchangeTokenViaCookieAuth({
   timeoutMs = 15000,
 } = {}) {
   const parsed = parseFullCode(code, state)
+  // Empty string is the explicit px-local exit; null/undefined remain unbound.
+  if (!fetchImpl && proxyUrl !== '' && !String(proxyUrl || '').trim())
+    throw serviceFailure('proxy_required', 'Bound VM egress is required for OAuth exchange')
   if (!fetchImpl) {
     return runOAuthAuthService({
       operation: 'exchange_code',
@@ -273,6 +276,8 @@ export async function sessionKeyToOAuth(
   if (process.env.KIN_FAKE_SESSION_OAUTH === '1' || process.env.KIN_FAKE_SESSION_OAUTH === 'true') {
     return fakeOauth(scope)
   }
+  if (!fetchImpl && proxyUrl !== '' && !String(proxyUrl || '').trim())
+    throw serviceFailure('proxy_required', 'Bound VM egress is required for OAuth import')
   try {
     const requestedScope = FULL_OAUTH_SCOPE
     const setup = String(scope || '').toLowerCase() === 'inference'

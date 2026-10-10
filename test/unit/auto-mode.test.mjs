@@ -1,7 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { classifierFixture } from '../fixtures/auto-mode.mjs'
-import { prepareCliHopBody, prepareOutboundAttempt } from '../../src/lib/protocol/outbound-attempt.mjs'
+import {
+  prepareCliHopBody,
+  prepareOutboundAttempt,
+  prepareOutboundEnvelope,
+} from '../../src/lib/protocol/outbound-attempt.mjs'
 import {
   classifyClaudeRequestPurpose,
   prepareClassifierBody,
@@ -17,6 +21,7 @@ test('classifier assembly retains caller fields across both outbound paths', () 
   for (const body of [
     prepareCliHopBody(input, { requestContext: context }),
     prepareOutboundAttempt({ canonicalBody: input, identity: {}, requestContext: context }).body,
+    prepareOutboundEnvelope({ canonicalBody: input, identity: {}, requestContext: context }).body,
   ]) {
     assert.deepEqual(body.thinking, input.thinking)
     assert.equal(body.temperature, 0)

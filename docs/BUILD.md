@@ -10,7 +10,7 @@ linux amd64 `bin/kin-{kernel,egress,worker,codex-kernel,oauth-auth}`、`share/wr
 | git tag `v*` | 人打 | 触发 Release 工作流 |
 | Actions run 的 commit SHA | GitHub | 对照源码与构建；不再单独上传 `VERSION.txt` |
 
-`VERSION` 是唯一应用版本来源；`package.json` / lockfile 不再重复记录版本。发版当天改 `VERSION` 和 [CHANGELOG.md](../CHANGELOG.md)，再打 annotated tag。`Dockerfile` 把这两个文件拷进控制面镜像，面板才能读当前版本。一键脚本 `deploy/install.sh` 按 GitHub Release tag 升级，不改版本文件。
+`VERSION` 是唯一应用版本来源；`package.json` / lockfile 不再重复记录版本。发版当天改 `VERSION` 和 [CHANGELOG.md](../CHANGELOG.md)，再打 annotated tag。`Dockerfile` 把这两个文件拷进控制面镜像，面板才能读当前版本。本 fork 一键脚本 `deploy/install.sh` 默认跟随 fork 的 `main` 源码构建（也可 `--version` 指定 tag），不改版本文件；分支构建用 git/镜像 revision 区分，见 [DEPLOY.md](DEPLOY.md)。
 
 ## 打一个 Release
 
@@ -27,7 +27,7 @@ git push origin v1.2.22
 |---|---|
 | `kin-kernel` | Claude Code 槽内核（仓内预编译，推理必带） |
 | `kin-egress` | 远程 SOCKS5 透明网关 |
-| `kin-worker` | **只** `telemetry`，不是 hop |
+| `kin-worker` | telemetry 与槽内 OAuth/profile/usage/重置操作；不是 Claude 推理 hop |
 | `kin-codex-kernel` | Codex 槽；仓内预编译 |
 | `kin-oauth-auth` | OAuth / Setup Token 换票服务二进制；源码不随部署上传 |
 没有 tag、只点 workflow_dispatch 时，产物进 artifact，不会建 Release。
@@ -44,7 +44,7 @@ install -m 755 kin-kernel kin-egress kin-worker kin-codex-kernel kin-oauth-auth 
 
 然后按 [DEPLOY.md](DEPLOY.md) 指环境变量。槽进程不是 root：权限必须是 `755`，不要 `700`。
 
-控制面镜像：`docker compose build` 拷仓内 `bin/kin-*` 与 `share/wrap-cli`（见 [DEPLOY.md](DEPLOY.md#docker-compose)）。槽位 `kin-os/*` 首次启动编 ubuntu，或 `node docker/kin-os/build.mjs`。
+控制面镜像：`docker compose -f docker-compose.yml -f docker-compose.build.yml build` 拷仓内 `bin/kin-*` 与 `share/wrap-cli`（见 [DEPLOY.md](DEPLOY.md#docker-compose)）。槽位 `kin-os/*` 首次启动编 ubuntu，或 `node docker/kin-os/build.mjs`。
 
 ## 本机构建
 

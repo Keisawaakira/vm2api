@@ -1,7 +1,10 @@
 import http from 'node:http'
 import { randomUUID } from 'node:crypto'
+import { observeRaw, observedRawChunks, RAW_LIMITS } from '../admin/raw-debug.mjs'
+import { prepareCCNativeTrace } from './cc-native-trace.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
+import { StringDecoder } from 'node:string_decoder'
 import { prepareOutboundHeaders } from '../protocol/outbound-attempt.mjs'
 import { sanitizeAnthropicBodyForBetaTokens } from '../protocol/anthropic-policy.mjs'
 import { withRequestProtocolBetas } from '../protocol/claude-code-betas.mjs'
@@ -26,6 +29,7 @@ import {
   clientCancelledResult,
   isClientCancelledResult,
   isCompleteAssistantMessage,
+  isNegativeTerminalState,
   isWrapConnectionError,
 } from '../core/errors.mjs'
 import { extraHeadersFromLimitError, isPlanLimitMessage } from '../pool/quota-window.mjs'
@@ -75,13 +79,37 @@ function readInternalToken(exec) {
 
 function workerRequest(
   exec,
-  { method = 'GET', requestPath, body = null, signal, timeoutMs = 180000, timeoutMode = 'overall', headers = {} } = {},
+  {
+    method = 'GET',
+    requestPath,
+    body = null,
+    signal,
+    timeoutMs = 180000,
+    timeoutMode = 'overall',
+    headers = {},
+    rawSend,
+    onResponse,
+  } = {},
 ) {
   return new Promise((resolve, reject) => {
     const { socketPath } = workerPaths(exec)
     if (!socketPath) {
       reject(Object.assign(new Error('slot worker socket is not configured'), { code: 'worker_socket_missing' }))
       return
+    }
+    let nativeAttempt
+    if (rawSend?.nativeTrace && rawSend.collector?.record?.status === 'capturing') {
+      nativeAttempt = prepareCCNativeTrace(
+        {
+          ...rawSend.nativeTrace,
+          vmId: rawSend.context?.vmId,
+          timeoutMs,
+          maxBytes: Math.max(4096, RAW_LIMITS.bytes - rawSend.collector.record.bytes_retained),
+        },
+        body,
+      )
+      body = nativeAttempt.envelope
+      rawSend.nativeAttempts.push(nativeAttempt)
     }
     const payload = body == null ? null : Buffer.from(typeof body === 'string' ? body : JSON.stringify(body))
     const internalToken = readInternalToken(exec)
@@ -90,7 +118,11 @@ function workerRequest(
       requestHeaders['content-type'] = 'application/json'
       requestHeaders['content-length'] = String(payload.length)
     }
-    if (internalToken) requestHeaders['x-internal-token'] = internalToken
+    if (internalToken) {
+      requestHeaders['x-internal-token'] = internalToken
+      // Mixed-version slots may still run the previous shared kernel until sync.
+      requestHeaders['x-kin-internal-token'] = internalToken
+    }
     let timer = null
     const clearTimer = () => {
       if (timer) {
@@ -116,13 +148,23 @@ function workerRequest(
       },
       (res) => {
         if (timeoutMode === 'first-byte') clearTimer()
+        onResponse?.(res)
         resolve(res)
       },
     )
     arm(timeoutMs, `slot worker timeout after ${timeoutMs}ms`)
     req.once('close', clearTimer)
     req.once('error', reject)
-    if (payload) req.write(payload)
+    if (payload) {
+      if (rawSend) {
+        rawSend.hop = observeRaw(rawSend.collector, 'beginHop', 'node_kernel', rawSend.context, () =>
+          JSON.stringify(body.body),
+        )
+        if (nativeAttempt) nativeAttempt.hop = rawSend.hop
+        req.once('error', () => observeRaw(rawSend.hop, 'connectError'))
+      }
+      req.write(payload)
+    }
     req.end()
   })
 }
@@ -135,26 +177,30 @@ function workerRequest(
  */
 function cancelOnAbort(exec, signal, requestId) {
   if (!signal || signal.aborted) return () => {}
+  const warn = (error) => {
+    console.warn(`[kernel-cancel] ${exec?.vmId || 'slot'} ${requestId}: ${error?.code || error?.message || error}`)
+  }
   const onAbort = () => {
     workerRequest(exec, {
       method: 'POST',
       requestPath: '/internal/v1/cancel',
       body: { request_id: requestId },
       timeoutMs: 3000,
+      // Observe body failures before resolving the header promise. A failed
+      // best-effort cancellation must not become an unhandled stream error.
+      onResponse: (res) => res.on('error', warn),
     })
       .then((res) => res.resume())
-      .catch((error) => {
-        console.warn(`[kernel-cancel] ${exec?.vmId || 'slot'} ${requestId}: ${error?.code || error?.message || error}`)
-      })
+      .catch(warn)
   }
   signal.addEventListener('abort', onAbort, { once: true })
   return () => signal.removeEventListener('abort', onAbort)
 }
 
-async function readAll(stream, limit = MAX_BODY) {
+async function readAll(stream, limit = MAX_BODY, rawHop) {
   const chunks = []
   let size = 0
-  for await (const chunk of stream) {
+  for await (const chunk of rawHop ? observedRawChunks(stream, rawHop) : stream) {
     const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
     size += value.length
     if (size > limit) {
@@ -191,7 +237,7 @@ function publicHeaders(headers = {}) {
 /** Flatten wrap `X-Rate-Limit-Headers` JSON into Anthropic Extra keys. */
 function mergeRateLimitHeaders(headers = {}) {
   const out = { ...headers }
-  const packed = headers['x-rate-limit-headers']
+  const packed = headers['x-rate-limit-headers'] ?? headers['x-kin-rate-limit-headers']
   if (!packed) return out
   try {
     const parsed = typeof packed === 'string' ? JSON.parse(packed) : packed
@@ -210,15 +256,16 @@ function mergeRateLimitHeaders(headers = {}) {
 /** Parse the X-Usage / X-Model / X-Stop-Reason worker metadata. */
 function streamMetaFromHeaders(headers = {}) {
   let usage = null
-  if (headers['x-usage']) {
+  const value = headers['x-usage'] ?? headers['x-kin-usage']
+  if (value) {
     try {
-      usage = JSON.parse(headers['x-usage'])
+      usage = JSON.parse(value)
     } catch {}
   }
   return {
     usage,
-    model: headers['x-model'] || null,
-    stopReason: headers['x-stop-reason'] || null,
+    model: headers['x-model'] ?? headers['x-kin-model'] ?? null,
+    stopReason: headers['x-stop-reason'] ?? headers['x-kin-stop-reason'] ?? null,
   }
 }
 
@@ -239,7 +286,7 @@ function mergeUsage(current, next) {
 export function isDownstreamCommitEvent(event) {
   if (!event || typeof event !== 'object') return false
   const t = String(event.type || '')
-  if (t === 'error' || t === 'message_start' || t === 'response_headers') return false
+  if (t === 'error' || t === 'message_start' || t === 'response_headers' || t === 'kin_response_headers') return false
   if (t === 'message_stop' || t === 'response.completed' || t === 'response.done' || t === 'message_delta') return false
 
   if (t === 'content_block_delta') {
@@ -382,7 +429,9 @@ function dumpSessionEnvelope(envelope) {
     const rec = {
       ts: new Date().toISOString(),
       hop: 'go-worker-envelope',
-      note: 'This is the JSON body+headers the slot worker POSTs to api.anthropic.com/v1/messages. Authorization is attached by the worker from OAuth and is not in this envelope.',
+      note: 'Node→worker/kernel envelope, not a final Anthropic wire capture. Kernel/CLI may still transform the body; credentials are attached downstream.',
+      preserve_cache_breakpoints: envelope.preserve_cache_breakpoints,
+      cache_ttl: envelope.cache_ttl,
       stream: envelope.stream,
       delivery_mode: envelope.delivery_mode,
       headers,
@@ -399,7 +448,15 @@ function dumpSessionEnvelope(envelope) {
  * body on the VM's HTTP betas would lift every role=system turn into system[],
  * so system grows each turn and no cached prefix is ever read.
  */
-export function finalizeWorkerPayload({ body, reqHeaders, exec, identity, want1m = false, cliHop = false }) {
+export function finalizeWorkerPayload({
+  body,
+  reqHeaders,
+  exec,
+  identity,
+  want1m = false,
+  cliHop = false,
+  chatPreserve = false,
+}) {
   const model = body?.model || ''
   const credMode = credentialModeFromOauth(exec?.vm?.claude || {})
   const headers = prepareOutboundHeaders(reqHeaders, exec?.homeDir, identity, model, {
@@ -408,13 +465,17 @@ export function finalizeWorkerPayload({ body, reqHeaders, exec, identity, want1m
   })
   const betas = withRequestProtocolBetas(String(headers?.['anthropic-beta'] || '').split(','), body)
   headers['anthropic-beta'] = betas.join(',')
-  // Envelope headers are discarded; the existing MessageRequest.betas channel
-  // carries request gates to the native CLI, which builds the actual HTTP wire.
-  const gated = cliHop ? { ...body, betas } : sanitizeAnthropicBodyForBetaTokens(body, headers['anthropic-beta'])
-  return { headers, body: sealClaudeCodeCch(gated) }
+  // The native CLI owns the final HTTP request. Pass the gate list through its
+  // existing channel, but never run accepted CPA Chat through a generic sanitizer.
+  const gated = cliHop
+    ? { ...body, betas }
+    : chatPreserve
+      ? body
+      : sanitizeAnthropicBodyForBetaTokens(body, headers['anthropic-beta'])
+  return { headers, body: chatPreserve ? gated : sealClaudeCodeCch(gated) }
 }
 
-function workerEnvelope({
+export function workerEnvelope({
   requestContext = null,
   body,
   reqHeaders,
@@ -426,8 +487,9 @@ function workerEnvelope({
   cacheTtl = null,
   preserveCacheBreakpoints = null,
   cliHop = false,
+  chatPreserve = false,
 } = {}) {
-  const finalized = finalizeWorkerPayload({ body, reqHeaders, exec, identity, want1m, cliHop })
+  const finalized = finalizeWorkerPayload({ body, reqHeaders, exec, identity, want1m, cliHop, chatPreserve })
   const envelope = {
     ...(requestContext ? { request_context: requestContext } : {}),
     body: finalized.body,
@@ -435,7 +497,8 @@ function workerEnvelope({
     stream: !!stream,
     delivery_mode: deliveryMode || 'realtime',
     preserve_cache_breakpoints: preserveCacheBreakpoints == null ? cacheTtl == null : preserveCacheBreakpoints === true,
-    cache_ttl: cacheTtl == null ? null : String(cacheTtl),
+    // Preservation and a forced retime must never be requested together.
+    cache_ttl: preserveCacheBreakpoints === true || cacheTtl == null ? null : String(cacheTtl),
   }
   dumpSessionEnvelope(envelope)
   return envelope
@@ -464,9 +527,18 @@ export async function callGoWorker({
   requestPath = '/internal/v1/messages',
   envelope = null,
   cliHop = false,
+  chatPreserve = false,
 } = {}) {
   if (isCrsMock()) {
-    const { body: outboundBody, headers } = finalizeWorkerPayload({ body, reqHeaders, exec, identity, want1m, cliHop })
+    const { body: outboundBody, headers } = finalizeWorkerPayload({
+      body,
+      reqHeaders,
+      exec,
+      identity,
+      want1m,
+      cliHop,
+      chatPreserve,
+    })
     writeCrsTrace({ body: outboundBody, headers, stream: false })
     const mock = mockCrsPayload({ scenario: mockScenario(exec) })
     return {
@@ -497,6 +569,7 @@ export async function callGoWorker({
             preserveCacheBreakpoints,
             cliHop,
             requestContext,
+            chatPreserve,
           })),
         request_id: requestId,
       },
@@ -515,7 +588,7 @@ export async function callGoWorker({
       usage: parsed?.usage || null,
       model: parsed?.model || null,
       stopReason: parsed?.stop_reason || null,
-      terminalState: headers['x-terminal-state'] || null,
+      terminalState: headers['x-terminal-state'] ?? headers['x-kin-terminal-state'] ?? null,
       transportError: false,
     })
   } catch (error) {
@@ -540,7 +613,32 @@ export async function callGoWorker({
   }
 }
 
-export async function streamGoWorker({
+export async function streamGoWorker(options = {}) {
+  if (!options.rawDebug) return streamGoWorkerImpl(options)
+  const rawSend = { ...options.rawDebug, nativeAttempts: [] }
+  let result
+  try {
+    result = await streamGoWorkerImpl({ ...options, rawSend })
+    observeRaw(rawSend.hop, 'outcome', result)
+    return result
+  } finally {
+    observeRaw(rawSend.hop, 'endRead', false)
+    if (rawSend.nativeAttempts.length)
+      await Promise.allSettled(
+        rawSend.nativeAttempts.map(async (attempt) => {
+          let trace
+          try {
+            trace = await attempt.finish({ waitForTerminal: result?.ok === true, signal: options.signal })
+          } catch {
+            trace = { status: 'unavailable', reason: 'native_collector_failed' }
+          }
+          observeRaw(attempt.hop, 'nativeTrace', trace)
+        }),
+      )
+  }
+}
+
+async function streamGoWorkerImpl({
   requestContext = null,
   exec,
   body,
@@ -552,15 +650,25 @@ export async function streamGoWorker({
   deliveryMode = 'realtime',
   onEvent,
   onCommit,
+  rawSend,
   want1m = false,
   cacheTtl = null,
   preserveCacheBreakpoints = null,
   requestPath = '/internal/v1/messages',
   envelope = null,
   cliHop = false,
+  chatPreserve = false,
 } = {}) {
   if (isCrsMock()) {
-    const { body: outboundBody, headers } = finalizeWorkerPayload({ body, reqHeaders, exec, identity, want1m, cliHop })
+    const { body: outboundBody, headers } = finalizeWorkerPayload({
+      body,
+      reqHeaders,
+      exec,
+      identity,
+      want1m,
+      cliHop,
+      chatPreserve,
+    })
     writeCrsTrace({ body: outboundBody, headers, stream: true })
     const scenario = mockScenario(exec)
     const mockStartedAt = Date.now()
@@ -631,8 +739,15 @@ export async function streamGoWorker({
   let ttftMs = null
   const requestId = randomUUID()
   const stopCancel = cancelOnAbort(exec, signal, requestId)
+  let response
+  let headers = {}
+  let sseUsage = null
+  let sseModel = null
+  let sseStop = null
+  let sseRateHeaders = {}
+  const assembler = createClaudeMessageAssembler()
   try {
-    const response = await workerRequest(exec, {
+    response = await workerRequest(exec, {
       method: 'POST',
       requestPath,
       body: {
@@ -649,6 +764,7 @@ export async function streamGoWorker({
             preserveCacheBreakpoints,
             cliHop,
             requestContext,
+            chatPreserve,
           })),
         request_id: requestId,
       },
@@ -656,10 +772,11 @@ export async function streamGoWorker({
       timeoutMs,
       timeoutMode: 'first-byte',
       headers: { te: 'trailers' },
+      rawSend,
     })
-    const headers = mergeRateLimitHeaders(publicHeaders(response.headers))
+    headers = mergeRateLimitHeaders(publicHeaders(response.headers))
     if ((response.statusCode || 0) < 200 || (response.statusCode || 0) >= 300) {
-      const data = await readAll(response, 1024 * 1024)
+      const data = await readAll(response, 1024 * 1024, rawSend?.hop)
       return restoreKernelErrorStatus({
         ok: false,
         status: response.statusCode || 0,
@@ -667,18 +784,14 @@ export async function streamGoWorker({
         body: parseJson(data),
         headers,
         committed: false,
-        terminalState: headers['x-terminal-state'] || 'error',
+        terminalState: headers['x-terminal-state'] ?? headers['x-kin-terminal-state'] ?? 'error',
         transportError: false,
       })
     }
     let buffer = ''
     let lastError = null
     let dataBuf = ''
-    let sseUsage = null
-    let sseModel = null
-    let sseStop = null
-    let sseRateHeaders = {}
-    const assembler = createClaudeMessageAssembler()
+    const decoder = new StringDecoder('utf8')
     const pendingLines = []
     const takeSseEvent = () => {
       try {
@@ -707,10 +820,20 @@ export async function streamGoWorker({
     }
     const observeSseEvent = (event) => {
       if (!event) return event
-      if (event.type === 'response_headers' && event.headers && typeof event.headers === 'object') {
+      if (
+        (event.type === 'response_headers' || event.type === 'kin_response_headers') &&
+        event.headers &&
+        typeof event.headers === 'object'
+      ) {
         sseRateHeaders = { ...sseRateHeaders, ...event.headers }
       }
       if (event.type === 'error') lastError = event
+      // Buffered Chat may contain multiple Messages. A terminal/stop reason
+      // belongs to the latest sequence, not a prior completed one.
+      if (event.type === 'message_start') {
+        sawMessageStop = false
+        sseStop = null
+      }
       if (event.type === 'message_stop') sawMessageStop = true
       const evUsage = usageFromSseEvent(event)
       if (evUsage) sseUsage = mergeUsage(sseUsage, evUsage)
@@ -718,6 +841,31 @@ export async function streamGoWorker({
       const stop = event.message?.stop_reason || event.delta?.stop_reason
       if (stop) sseStop = stop
       return event
+    }
+    const processLine = async (raw) => {
+      const line = raw.replace(/\r$/, '')
+      applyClaudeSSELineToMessage(line, assembler)
+      if (line.startsWith('data:')) {
+        const piece = line.slice(5).trim()
+        if (piece && piece !== '[DONE]') {
+          dataBuf = dataBuf ? `${dataBuf}\n${piece}` : piece
+          const event = observeSseEvent(takeSseEvent())
+          if (isDownstreamCommitEvent(event)) await flushCommit()
+        }
+        if (ttftMs == null) ttftMs = Date.now() - startedAt
+      } else if (line === '') {
+        if (dataBuf) {
+          const event = takeSseEvent()
+          dataBuf = ''
+          observeSseEvent(event)
+          if (isDownstreamCommitEvent(event)) await flushCommit()
+        }
+      } else if (dataBuf && !line.startsWith('event:') && !line.startsWith(':')) {
+        dataBuf = `${dataBuf}\n${line}`
+        const event = observeSseEvent(takeSseEvent())
+        if (isDownstreamCommitEvent(event)) await flushCommit()
+      }
+      await emitLine(line)
     }
     const firstByteMs = Math.max(0, Number(timeoutMs) || 0)
     const idleMs = Math.max(0, Number(idleTimeoutMs) || 0)
@@ -738,45 +886,20 @@ export async function streamGoWorker({
       idleTimer.unref?.()
     }
     try {
-      // message_stop is the protocol terminal event, but the kernel still sends
-      // job_done and its trailers afterward. Keep reading until the worker
-      // closes the response so a normal completion is not mistaken for cancel.
-      for await (const chunk of response) {
+      // Drain job_done/trailers after message_stop; raw observation must also finish.
+      for await (const chunk of rawSend?.hop ? observedRawChunks(response, rawSend.hop) : response) {
         sawChunk = true
         lastChunkAt = Date.now()
-        buffer += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk)
+        buffer += Buffer.isBuffer(chunk) ? decoder.write(chunk) : String(chunk)
         let newline
         while ((newline = buffer.indexOf('\n')) >= 0) {
-          const line = buffer.slice(0, newline).replace(/\r$/, '')
+          const line = buffer.slice(0, newline)
           buffer = buffer.slice(newline + 1)
-          applyClaudeSSELineToMessage(line, assembler)
-          if (line.startsWith('data:')) {
-            const piece = line.slice(5).trim()
-            if (piece && piece !== '[DONE]') {
-              dataBuf = dataBuf ? `${dataBuf}\n${piece}` : piece
-              const event = observeSseEvent(takeSseEvent())
-              if (isDownstreamCommitEvent(event)) await flushCommit()
-            }
-            if (ttftMs == null) ttftMs = Date.now() - startedAt
-          } else if (line === '') {
-            if (dataBuf) {
-              const event = takeSseEvent()
-              dataBuf = ''
-              observeSseEvent(event)
-              if (isDownstreamCommitEvent(event)) await flushCommit()
-            }
-          } else if (dataBuf && !line.startsWith('event:') && !line.startsWith(':')) {
-            dataBuf = `${dataBuf}\n${line}`
-            const event = observeSseEvent(takeSseEvent())
-            if (isDownstreamCommitEvent(event)) await flushCommit()
-          }
-          await emitLine(line)
+          await processLine(line)
         }
       }
-      if (buffer) {
-        applyClaudeSSELineToMessage(buffer, assembler)
-        await emitLine(buffer)
-      }
+      buffer += decoder.end()
+      if (buffer) await processLine(buffer)
       if (dataBuf) {
         const event = observeSseEvent(takeSseEvent())
         if (isDownstreamCommitEvent(event)) await flushCommit()
@@ -785,20 +908,40 @@ export async function streamGoWorker({
       const meta = streamMetaFromHeaders({ ...headers, ...trailers })
       const assembled = assembler.message
       const stopReason = meta.stopReason || sseStop || assembled?.stop_reason || null
-      const complete = !lastError && isCompleteAssistantMessage({ body: assembled, stopReason, sawMessageStop })
+      // Explicit failures in either header set win, even over a complete-looking body.
+      const failedTerminal = [
+        trailers['x-terminal-state'],
+        headers['x-terminal-state'],
+        trailers['x-kin-terminal-state'],
+        headers['x-kin-terminal-state'],
+      ].find(isNegativeTerminalState)
+      const failure =
+        lastError ||
+        (assembler.error ? { type: 'error', error: assembler.error } : null) ||
+        (failedTerminal
+          ? {
+              type: 'error',
+              error: {
+                type: 'worker_error',
+                code: 'worker_terminal_failure',
+                message: `Worker terminal state: ${failedTerminal}`,
+              },
+            }
+          : null)
+      const complete = !failure && isCompleteAssistantMessage({ body: assembled, stopReason, sawMessageStop })
       if (!committed && complete) await flushCommit()
-      const terminalState = complete ? 'verified' : 'incomplete'
+      const terminalState = failedTerminal || (complete ? 'verified' : 'incomplete')
       const rateHeaders = mergeRateLimitHeaders({ ...sseRateHeaders, ...headers, ...trailers })
+      // Trailer totals overlay cumulative SSE fields, retaining nested measured cache buckets.
+      const usage = mergeUsage(mergeUsage(assembled?.usage || null, sseUsage), meta.usage)
       return restoreUncommittedHop({
-        ok: response.statusCode === 200 && !lastError && complete,
+        ok: response.statusCode === 200 && complete,
         status: response.statusCode || 0,
         via: 'go-worker-stream',
 
-        body: lastError || assembled || { type: 'message', role: 'assistant', content: [] },
+        body: failure || (assembled ? { ...assembled, usage } : { type: 'message', role: 'assistant', content: [] }),
         headers: rateHeaders,
-        // Trailer stays authoritative, but it may carry totals only (Codex/Responses hops).
-        // Merge so SSE `input_tokens_details` / cache breakdown survives instead of being short-circuited.
-        usage: mergeUsage(mergeUsage(assembled?.usage || null, sseUsage), meta.usage),
+        usage,
         model: meta.model || sseModel || assembled?.model || null,
         stopReason,
         sawMessageStop,
@@ -811,11 +954,17 @@ export async function streamGoWorker({
       if (idleTimer) clearInterval(idleTimer)
     }
   } catch (error) {
+    const rateHeaders = mergeRateLimitHeaders({ ...sseRateHeaders, ...headers, ...publicHeaders(response?.trailers) })
+    const meta = streamMetaFromHeaders(rateHeaders)
     if (signal?.aborted) {
       return clientCancelledResult({
         via: 'go-worker-stream',
         ttftMs,
         committed,
+        headers: rateHeaders,
+        usage: mergeUsage(mergeUsage(assembler.message?.usage, sseUsage), meta.usage),
+        model: meta.model || sseModel || assembler.message?.model || null,
+        stopReason: meta.stopReason || sseStop || assembler.message?.stop_reason || null,
       })
     }
     return {
@@ -826,11 +975,14 @@ export async function streamGoWorker({
         type: 'error',
         error: {
           type: 'worker_error',
-          code: error.code || 'worker_transport_error',
+          code: signal?.aborted ? 'client_aborted' : error.code || 'worker_transport_error',
           message: String(error.message || error).slice(0, 300),
         },
       },
-      headers: {},
+      headers: rateHeaders,
+      usage: mergeUsage(mergeUsage(assembler.message?.usage, sseUsage), meta.usage),
+      model: meta.model || sseModel || assembler.message?.model || null,
+      stopReason: meta.stopReason || sseStop || assembler.message?.stop_reason || null,
       ttftMs,
       committed,
       terminalState: committed ? 'incomplete' : 'transport_error',

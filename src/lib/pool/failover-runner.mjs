@@ -320,6 +320,8 @@ function emptyHopReleased(result) {
 
 /** Hidden transport / credential retries inside one hop still spend that unit's budget. */
 function executionsOf(result) {
+  if (Number.isSafeInteger(result?.rust_execution_count) && result.rust_execution_count >= 0)
+    return result.rust_execution_count
   if (result?.upstreamExecutions === 0) return 0
   return 1 + (result?.rust_transport_retried ? 1 : 0) + (result?.credential_retried ? 1 : 0)
 }
@@ -358,7 +360,16 @@ function selectionFailure(selected, { excluded, lastPolicy, lastResult, hops }) 
 }
 
 function applyCooldown(scheduler, selected, policy, model, { diagnosticPin = false } = {}) {
-  if (policy?.action !== 'continue-and-cooldown' && policy?.action !== 'disable' && policy?.action !== 'pause') return
+  // A committed auth failure stops delivery, but still retires its invalid credential.
+  const stoppedAuth =
+    policy?.action === 'stop' && (policy.reason === 'oauth_no_refresh' || policy.reason === 'oauth_revoked')
+  if (
+    policy?.action !== 'continue-and-cooldown' &&
+    policy?.action !== 'disable' &&
+    policy?.action !== 'pause' &&
+    !stoppedAuth
+  )
+    return
   // VM / master pin is a diagnostic. A 401 from the wrong inbound class
   // must not forever-park a Setup Token that has no refresh by design.
   if (diagnosticPin && (policy.reason === 'oauth_no_refresh' || policy.reason === 'oauth_revoked')) {
@@ -758,6 +769,7 @@ export class FailoverRunner {
           body,
           attemptMeta,
           attemptNo,
+          maxExecutions: budget.executionsLeft(selected.accountId),
           stream,
           deliveryMode: deliveryMode || this.config.delivery_mode,
           signal,
@@ -878,7 +890,7 @@ export class FailoverRunner {
         }
         budget.noteSwitch(selected.accountId, selected.vmId, { spill: policy.reason === 'slot_busy' })
       } catch (error) {
-        noteHop(null)
+        noteHop(error)
         if (signal?.aborted || error?.code === 'selection_cancelled' || error?.code === 'request_cancelled') {
           this.attemptsRepo?.complete?.(requestId, attemptNo, {
             upstreamStatus: 0,
@@ -894,6 +906,7 @@ export class FailoverRunner {
         result = {
           ok: false,
           status: 0,
+          rust_execution_count: error?.rust_execution_count,
           transportError: true,
           committed,
           terminalState: committed ? 'incomplete' : 'transport_error',

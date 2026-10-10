@@ -444,6 +444,10 @@ export function createRoutingRuntime(ctx) {
         mode: routingConfig.logging.mode,
         retainDays: routingConfig.logging.retain_days,
         debugRetainDays: routingConfig.logging.debug_retain_days,
+        rawNonstreamDebug: routingConfig.logging.raw_nonstream_debug === true,
+        ccNativeTrace: routingConfig.logging.cc_native_trace === true,
+        offlineKernelProbe: routingConfig.logging.offline_kernel_probe === true,
+        offlineKernelDataplane: routingConfig.logging.offline_kernel_dataplane || 'current',
         maxMb: routingConfig.logging.max_mb,
         mutedErrorClasses: routingConfig.logging.muted_error_classes,
       })

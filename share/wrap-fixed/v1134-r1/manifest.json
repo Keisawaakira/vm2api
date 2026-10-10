@@ -1,0 +1,201 @@
+{
+  "version": 1,
+  "id": "wrap-fixed-v1134-r1",
+  "status": "owner_approved",
+  "production_approved": true,
+  "dataplane": "wrap-fixed",
+  "kernel_policy": "shared_upstream",
+  "approval_scope": "cli_only",
+  "approval": {
+    "date": "2026-10-09",
+    "basis": "owner-authorized locally verified fixed maintenance",
+    "scope": "model/field request gates and lossless native passthrough; not provider-refusal bypass or Linux/cloud acceptance"
+  },
+  "lineage": {
+    "source_file": "share/wrap-cli/cli-node",
+    "source_sha256": "643f55232ec1950275daaa40adefd46f5d695eba613c622d66e0e8c1968a402c",
+    "upstream_cli_sha256": "643f55232ec1950275daaa40adefd46f5d695eba613c622d66e0e8c1968a402c",
+    "original_cc_sha256": "be5eec49a78345dd935e302e88c9d7ad0afbb09a195356d81be1bdea766f3960",
+    "previous_release": "wrap-fixed-v1124-r1",
+    "classifier_reference_commit": "fe4b23a",
+    "refresh_reference_commit": "cb585bb6",
+    "kernel_wire_reference_commit": "18188710",
+    "request_wire_reference_commit": "af30a588"
+  },
+  "cache_contract": "node_dual_anchor_v1",
+  "supported_layouts": [
+    "zero",
+    "identity"
+  ],
+  "artifacts": {
+    "cli-node": {
+      "file": "cli-node",
+      "bytes": 27166872,
+      "sha256": "dcff19d309fb0b8d86cef8f5bc7c41dc349798d4e3f8c2662a873ceed2e85393",
+      "unpacked_bytes": 111167616,
+      "unpacked_sha256": "7f1566bf3981a03cec3a5ce16a72f3245070c1a52cc75a8bba8431ed7a637b6c",
+      "source_packed_sha256": "643f55232ec1950275daaa40adefd46f5d695eba613c622d66e0e8c1968a402c",
+      "source_unpacked_sha256": "eb42cff204284c4160ae27bb0fda5e5303b54e65d6872b718fb8d5d9bb78d024",
+      "patches": [
+        {
+          "id": "caller-system-snapshot",
+          "offset": 108613183,
+          "bytes": 1381,
+          "replacement_bytes": 1062,
+          "before_sha256": "f5422160f38bf4ec8c6f4440309b282da81dbdaf21549b49cb1e4ccf7a6cee79",
+          "after_sha256": "1ea09ff27ad8c07d287a91e2b35e432e34c2434fdf9f371c537d99472f76323b"
+        },
+        {
+          "id": "caller-system-blocks",
+          "offset": 108625401,
+          "bytes": 2503,
+          "replacement_bytes": 2378,
+          "before_sha256": "942b584d961fdd25186453c1f7b781eee15da2607a0f67b59a1e4e2c6ae80c80",
+          "after_sha256": "d0d65848088ef0f7f3ab7b1a60661e907c5a244f8452837d7c4334201b958fdf"
+        }
+      ],
+      "validations": {
+        "elf_graph": true,
+        "no_bytecode": true,
+        "unchanged_outside_js_spans": true,
+        "syntax": true,
+        "native_bindings_resolved": true,
+        "upx_integrity": true,
+        "exact_unpack_roundtrip": true
+      }
+    }
+  },
+  "tools": {
+    "upx": "upx 5.0.1",
+    "bun": "1.3.14"
+  },
+  "patches_sha256": "028c67c0ff7fff1f7206dae72401356b44c37e72a218cbecaeba14bdaa97a67c",
+  "semantics_sha256": "957060c5308d03669cbe08bee1b3c5400500107c2f818e83fadcaee3108325a4",
+  "local_validation": {
+    "completed": true,
+    "native_execution": false,
+    "behavior_tests": 597,
+    "full_source_scope_audit": {
+      "native_unresolved": [],
+      "whole_unresolved": [
+        "AggregateError",
+        "ArrayBuffer",
+        "AsyncIterator",
+        "Atomics",
+        "BigInt",
+        "BigInt64Array",
+        "BigUint64Array",
+        "Blob",
+        "DOMException",
+        "DataView",
+        "DedicatedWorkerGlobalScope",
+        "Deno",
+        "EdgeRuntime",
+        "EvalError",
+        "Event",
+        "EventTarget",
+        "File",
+        "FileReader",
+        "FinalizationRegistry",
+        "Float16Array",
+        "Float32Array",
+        "Float64Array",
+        "FormData",
+        "Function",
+        "Int16Array",
+        "Int32Array",
+        "Int8Array",
+        "Intl",
+        "Iterator",
+        "MACRO",
+        "MessageChannel",
+        "MessageEvent",
+        "MutationObserver",
+        "Proxy",
+        "RangeError",
+        "ReadableStream",
+        "ReferenceError",
+        "Reflect",
+        "Request",
+        "Response",
+        "SharedArrayBuffer",
+        "SuppressedError",
+        "SyntaxError",
+        "TextDecoderStream",
+        "TransformStream",
+        "TypeError",
+        "URIError",
+        "Uint16Array",
+        "Uint32Array",
+        "Uint8ClampedArray",
+        "WeakRef",
+        "WebSocket",
+        "WorkerGlobalScope",
+        "XMLHttpRequest",
+        "__REACT_DEVTOOLS_GLOBAL_HOOK__",
+        "atob",
+        "btoa",
+        "clearImmediate",
+        "clearInterval",
+        "crypto",
+        "decodeURI",
+        "decodeURIComponent",
+        "define",
+        "document",
+        "encodeURI",
+        "encodeURIComponent",
+        "escape",
+        "eval",
+        "gate",
+        "getAntModelOverrideConfig",
+        "getAntModels",
+        "global",
+        "isFinite",
+        "isNaN",
+        "localStorage",
+        "module__cloneBuffer",
+        "module__nodeUtil",
+        "module_isBuffer",
+        "navigator",
+        "parseFloat",
+        "parseInt",
+        "reportError",
+        "resolveAntModel",
+        "self",
+        "setImmediate",
+        "setInterval",
+        "unescape",
+        "window"
+      ],
+      "session_bindings": [
+        {
+          "name": "init_jobSession",
+          "declared": true
+        },
+        {
+          "name": "getJobSessionId",
+          "declared": true
+        },
+        {
+          "name": "runWithJobSession",
+          "declared": true
+        },
+        {
+          "name": "AsyncLocalStorage",
+          "declared": true
+        }
+      ]
+    },
+    "scope": "actual native/bridge/API/gate fragments, fake SDK, no real provider or Linux execution"
+  },
+  "limitations": [
+    "No Linux ELF/kernel/provider execution",
+    "No guarantee of quota savings, thinking or format compliance",
+    "Stock/non-kin behavior unchanged; only zero/identity native path has caller snapshot guarantee"
+  ],
+  "inherited_repairs": [],
+  "native_lifecycle_contract": "nonblocking_cancel_v1",
+  "classifier_contract": "native_request_context_v1",
+  "native_wire_contract": "unprefixed_native_v2",
+  "request_wire_contract": "model_field_gates_v1"
+}

@@ -52,13 +52,13 @@ describe('cache TTL split', () => {
     ).toEqual({ fiveM: 100, oneH: 200 })
   })
 
-  it('attributes an aggregate to the applied TTL', () => {
+  it('leaves aggregate-only writes unclassified regardless of the TTL hint', () => {
     expect(
       cacheWriteSplit({ total: 300, fiveM: 0, oneH: 0, ttl: '1h' })
-    ).toEqual({ fiveM: 0, oneH: 300 })
+    ).toEqual({ fiveM: 0, oneH: 0, unknown: 300 })
     expect(
       cacheWriteSplit({ total: 300, fiveM: 0, oneH: 0, ttl: null })
-    ).toEqual({ fiveM: 300, oneH: 0 })
+    ).toEqual({ fiveM: 0, oneH: 0, unknown: 300 })
   })
 
   it('splits cache-write cost proportionally for mixed TTL', () => {

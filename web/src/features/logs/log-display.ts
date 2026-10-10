@@ -9,6 +9,7 @@ import type {
   UsageLogRow,
 } from '@/types/panel-usage-logs'
 import { toast } from 'sonner'
+import { showModelRedirect } from './log-badges'
 
 export async function copyText(text: string) {
   try {
@@ -64,38 +65,35 @@ export function formatShortDistance(date: Date, now: Date): string {
 
 /**
  * 缓存写入按 TTL 拆分（表格 tooltip / 详情计费行共用）。
- * 有 5m/1h 明细就用明细；只有合计时按 `cacheTtlApplied` 归到一侧。
+ * 只展示已观测到的 5m/1h 明细，余数标为未知，不按请求 TTL 推算。
  */
 export function cacheWriteSplit(input: {
   total: number
   fiveM: number
   oneH: number
   ttl: CacheTtlApplied
-}): { fiveM: number; oneH: number } {
-  return {
-    fiveM: input.fiveM > 0 ? input.fiveM : input.ttl !== '1h' ? input.total : 0,
-    oneH: input.oneH > 0 ? input.oneH : input.ttl === '1h' ? input.total : 0,
-  }
+}): { fiveM: number; oneH: number; unknown?: number } {
+  const fiveM = Math.max(0, input.fiveM || 0)
+  const oneH = Math.max(0, input.oneH || 0)
+  const unknown = Math.max(0, (input.total || 0) - fiveM - oneH)
+  return { fiveM, oneH, ...(unknown ? { unknown } : {}) }
 }
 
 /**
- * 缓存写入费用拆分。后端只给合计 `cacheCreation`：`mixed` 按 token 占比分摊，
- * `1h` 全归 1h，其余归 5m（hub `resolveCacheCreationSplit` 的 legacy 分支）。
+ * 后端仅给写入费用合计。明细完整时按观测 token 比例作展示估算；
+ * 有未分类 token 时保留费用合计，不把它冒充某一个 TTL 的精确费用。
  */
 export function cacheCostSplit(
   cost: number | null,
-  tokens: { fiveM: number; oneH: number },
-  ttl: CacheTtlApplied
-): { fiveM: number; oneH: number } {
+  tokens: { fiveM: number; oneH: number; unknown?: number },
+  _ttl: CacheTtlApplied
+): { fiveM: number; oneH: number; unallocated?: number } {
   if (cost == null || cost <= 0) return { fiveM: 0, oneH: 0 }
-  if (ttl === 'mixed') {
-    const sum = tokens.fiveM + tokens.oneH
-    if (sum <= 0) return { fiveM: cost, oneH: 0 }
-    const fiveM = (cost * tokens.fiveM) / sum
-    return { fiveM, oneH: cost - fiveM }
-  }
-  if (ttl === '1h') return { fiveM: 0, oneH: cost }
-  return { fiveM: cost, oneH: 0 }
+  const sum = tokens.fiveM + tokens.oneH
+  if ((tokens.unknown || 0) > 0 || sum <= 0)
+    return { fiveM: 0, oneH: 0, unallocated: cost }
+  const fiveM = (cost * tokens.fiveM) / sum
+  return { fiveM, oneH: cost - fiveM }
 }
 
 /** 单价 `@ $x / 1M`：金额 × 1e6 / token 数，两位小数；无 token 返回 null。 */
@@ -158,16 +156,16 @@ export function resolveModelAuditDisplay(row: {
   actualResponseModel: string | null
 }): ModelAuditDisplay {
   const effectiveRequestModel = row.model ?? row.originalModel
-  const hasActualMismatch = Boolean(
-    row.actualResponseModel &&
-    effectiveRequestModel &&
-    row.actualResponseModel !== effectiveRequestModel
-  )
+  const hasActualMismatch = showModelRedirect({
+    requested_model: effectiveRequestModel ?? undefined,
+    upstream_model: row.actualResponseModel ?? undefined,
+  })
   return {
     primaryBillingModel: effectiveRequestModel,
-    hasRedirect: Boolean(
-      row.originalModel && row.model && row.originalModel !== row.model
-    ),
+    hasRedirect: showModelRedirect({
+      requested_model: row.originalModel ?? undefined,
+      upstream_model: row.model ?? undefined,
+    }),
     hasActualMismatch,
     secondaryActualModel: hasActualMismatch ? row.actualResponseModel : null,
     effectiveRequestModel,

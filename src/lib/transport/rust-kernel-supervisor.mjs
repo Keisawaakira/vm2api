@@ -16,10 +16,14 @@ import {
 import { streamIdleTimeoutMs } from '../core/config.mjs'
 import { OFFICIAL_CLI_VERSION } from '../identity/vm-identity.mjs'
 import { cacheTtlFromRouting, normalizeCacheTtl } from '../protocol/cache-ttl.mjs'
+import { credentialModeFromOauth } from '../oauth/credential-mode.mjs'
+import { CC_TRACE_CONTAINER_BIN, ccNativeTraceEnabled, installCCNativeTraceFiles } from './cc-native-trace.mjs'
 import { setVmSchedulable, listVms, getVm } from '../vm/vm-registry.mjs'
 import { isCodexVm } from '../vm/vm-kind.mjs'
 import {
   CONTAINER_CLI_NODE_BIN,
+  containerCliBinForDataplane,
+  nativeKernelFamily,
   KERNEL_NATIVE_SLOT_COUNT,
   resolveCliSystemLayout,
   resolveKernelDataplane,
@@ -501,7 +505,8 @@ async function startRustKernel(exec, { timeoutMs, control, runDockerExec, force 
     const ids = slotUidGidFromHomeDir(exec.homeDir)
     ensureOfficialCredentialLink(exec.homeDir, ids || {})
     try {
-      ensureSlotSubscriptionType(exec.homeDir, exec.vm?.claude?.account_tier || exec.vm?.account_tier)
+      if (slotHost(exec.vm).kind === 'local')
+        ensureSlotSubscriptionType(exec.homeDir, exec.vm?.claude?.account_tier || exec.vm?.account_tier)
     } catch {}
   }
   const paths = rustKernelPaths(exec)
@@ -619,6 +624,13 @@ export function writeKernelConfig(
   { token, proxyUrl, proxyRequired, officialCcInference, timezone, routing } = {},
 ) {
   if (!projectRoot || !vm?.id) return null
+  const dataplane = resolveKernelDataplane(vm, routing || {}) || 'wrap'
+  // Placement comes from the persisted record, even for partial caller snapshots.
+  const record = getVm(projectRoot, vm.id) || vm
+  const host = slotHost(record)
+  const fixed = dataplane === 'wrap-fixed' || dataplane === 'cc-fixed'
+  if (host.bakedKernel && !['wrap', 'cc'].includes(dataplane))
+    throw Object.assign(new Error(`集群节点镜像不支持 ${dataplane}，不允许回退原版`), { code: 'remote_unsupported' })
   const runDir = path.join(projectRoot, 'vms', vm.id, 'run')
   const homeDir = path.join(projectRoot, 'vms', vm.id, 'cli-home')
   fs.mkdirSync(runDir, { recursive: true, mode: 0o700 })
@@ -639,14 +651,30 @@ export function writeKernelConfig(
   if (!secret) secret = String(previous.internal_token || '').trim()
   if (secret) replaceSlotOwnedFile(tokenPath, secret + '\n', vm)
   const testEndpoints = process.env.KIN_KERNEL_TEST_ENDPOINTS === '1'
-  const dataplane = resolveKernelDataplane(vm, routing || {}) || 'wrap'
   const envBin = String(process.env.KIN_CLAUDE_BIN || '').trim()
-  // Callers pass partial vm snapshots (summaries, exec contexts); the vm json decides placement.
-  const record = getVm(projectRoot, vm.id) || vm
-  const host = slotHost(record)
-  const claudeBin = envBin || (dataplane === 'wrap' ? host.bins.cli : host.bins.cc)
+  const selectedBin = host.bakedKernel
+    ? dataplane === 'wrap'
+      ? host.bins.cli
+      : host.bins.cc
+    : containerCliBinForDataplane(dataplane)
+  if (fixed && envBin && envBin !== selectedBin)
+    throw new Error(`${dataplane} does not allow a different KIN_CLAUDE_BIN override`)
+  const traceCc =
+    dataplane === 'cc-fixed' &&
+    (routing === undefined ? previous.claude_bin === CC_TRACE_CONTAINER_BIN : ccNativeTraceEnabled(dataplane, routing))
+  if (traceCc) {
+    const traceDir = installCCNativeTraceFiles(path.join(homeDir, '.kin'))
+    chownSlotRuntimeFile(traceDir, vm)
+  }
+  const claudeBin = traceCc ? CC_TRACE_CONTAINER_BIN : envBin || selectedBin
   const tz = String(timezone || vm.timezone || previous.timezone || '').trim()
-  const defaultCacheTtl = routing != null ? cacheTtlFromRouting(routing) : normalizeCacheTtl(previous.default_cache_ttl)
+  const cacheOptions = { credentialMode: credentialModeFromOauth(vm.claude || {}) }
+  const defaultCacheTtl =
+    routing != null
+      ? cacheTtlFromRouting(routing, cacheOptions)
+      : previous.default_cache_ttl
+        ? normalizeCacheTtl(previous.default_cache_ttl)
+        : cacheTtlFromRouting({}, cacheOptions)
   const previousIdleSeconds = Number(previous.idle_timeout_seconds)
   const idleMs = routing == null && previousIdleSeconds > 0 ? previousIdleSeconds * 1000 : streamIdleTimeoutMs(routing)
 
@@ -668,7 +696,8 @@ export function writeKernelConfig(
     runtime_kind: 'docker',
     test_endpoints: testEndpoints,
     provider: 'local_cli',
-    dataplane,
+    // The promoted variant uses the existing native wrap ABI, not a new Rust enum.
+    dataplane: nativeKernelFamily(dataplane),
     claude_bin: claudeBin,
     slots_per_worker: wrapSlotCount(vm, routing || {}),
     persona_preset: resolveSlotPersonaPreset(vm, routing || {}),

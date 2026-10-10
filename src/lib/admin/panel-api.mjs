@@ -66,6 +66,7 @@ import {
 import { proxyHasVm } from '../vm/proxy-pool.mjs'
 import { collectLivePanelCredentials } from './panel-live-credentials.mjs'
 import { officialCcHome, readOfficialCcStatus, normalizeOfficialCcConfig } from '../oauth/official-cc-bootstrap.mjs'
+import { readCCNativeTraceReadiness } from '../transport/cc-native-trace.mjs'
 import { normalizeHealthProbeConfig } from './health-probe.mjs'
 import { normalizeUsageProbeConfig } from '../oauth/usage-probe-monitor.mjs'
 import { publicNotifyConfig, summarizePoolAvailability } from './notify.mjs'
@@ -340,8 +341,8 @@ export function validatePersonaRoutingPatch(body = {}) {
       }
     }
   }
-  if (compat.cache_ttl != null && !['5m', '1h'].includes(String(compat.cache_ttl).trim())) {
-    problems.push(`cache_ttl 必须是 5m / 1h，收到 ${compat.cache_ttl}`)
+  if (compat.cache_ttl != null && !['auto', '5m', '1h'].includes(String(compat.cache_ttl).trim())) {
+    problems.push(`cache_ttl 必须是 auto / 5m / 1h，收到 ${compat.cache_ttl}`)
   }
   if (compat.cache_breakpoints != null) {
     const bp = compat.cache_breakpoints
@@ -726,6 +727,11 @@ export async function buildVmDetail({
         }
       : {
           ...processStatus,
+          cc_native_trace: {
+            ...readCCNativeTraceReadiness(cfg.paths.project, id, { cliPid: rustHealth?.cli_pid }),
+            enabled: routingConfig.logging?.cc_native_trace === true,
+            raw_enabled: routingConfig.logging?.mode !== 'off' && routingConfig.logging?.raw_nonstream_debug === true,
+          },
           credential_owner: 'go',
           configured_engine: summary.inference_engine || null,
           resolved_engine: inferenceEngine,

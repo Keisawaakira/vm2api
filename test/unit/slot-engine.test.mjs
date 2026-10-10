@@ -80,7 +80,7 @@ test('kernel dataplane defaults wrap and accepts cc and crag', () => {
   assert.equal(normalizeKernelDataplane('cc'), 'cc')
   assert.equal(normalizeKernelDataplane('official-cli'), 'crag')
   assert.deepEqual(validateInferenceRoutingPatch({ inference: { dataplane: 'nope' } }), [
-    'inference.dataplane 必须是 wrap、cc 或 crag',
+    'inference.dataplane 必须是 wrap、wrap-fixed、cc、cc-fixed 或 crag',
   ])
   assert.deepEqual(validateInferenceRoutingPatch({ inference: { dataplane: 'cc' } }), [])
   const patch = parseSlotEnginePolicyPatch({ dataplane: 'cc' })

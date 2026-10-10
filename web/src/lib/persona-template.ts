@@ -134,11 +134,11 @@ export const DEFAULT_PERSONA_TEMPLATES: Record<PersonaPreset, PersonaBlock[]> =
       },
       {
         id: 'caller_agent',
-        note: '常驻约束 + 调用方 agent prompt，都空则整块丢弃。2.1.263 起 1h global',
+        note: '常驻约束 + 调用方 agent prompt，都空则整块丢弃。TTL 跟随缓存策略',
         drop_if_empty: true,
         type: 'text',
         text: '{{agent_standing}}{{caller_agent}}',
-        cache_control: { type: 'ephemeral', ttl: '1h', scope: 'global' },
+        cache_control: { type: 'ephemeral', scope: 'global' },
       },
       {
         id: 'env',
@@ -170,17 +170,17 @@ export const DEFAULT_PERSONA_TEMPLATES: Record<PersonaPreset, PersonaBlock[]> =
       },
       {
         id: 'agent_official',
-        note: '常驻约束为第一段 + 官方 Claude Code 基础提示词全文。2.1.263 起 1h global 缓存',
+        note: '常驻约束为第一段 + 官方 Claude Code 基础提示词全文。TTL 跟随缓存策略',
         type: 'text',
         text: '{{agent_standing}}{{agent_official}}',
-        cache_control: { type: 'ephemeral', ttl: '1h', scope: 'global' },
+        cache_control: { type: 'ephemeral', scope: 'global' },
       },
       {
         id: 'env_official',
-        note: '官方 continuation + Environment。2.1.263 起 1h 缓存，无 scope',
+        note: '官方 continuation + Environment。TTL 跟随缓存策略，无 scope',
         type: 'text',
         text: '{{env_official}}',
-        cache_control: { type: 'ephemeral', ttl: '1h' },
+        cache_control: { type: 'ephemeral' },
       },
       {
         id: 'caller_system',
@@ -208,7 +208,7 @@ export const DEFAULT_PERSONA_TEMPLATES: Record<PersonaPreset, PersonaBlock[]> =
         hide: true,
         type: 'text',
         text: '{{agent_standing}}{{caller_agent}}',
-        cache_control: { type: 'ephemeral', ttl: '1h' },
+        cache_control: { type: 'ephemeral' },
       },
       {
         id: 'env',

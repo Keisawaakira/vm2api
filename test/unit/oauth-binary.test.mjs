@@ -13,6 +13,7 @@ import { sessionKeyToOAuth } from '../../src/lib/oauth/cookie-auth.mjs'
 
 test('OAuth binary exchanges provider state with session PKCE and preserves cookie authorization', {
   timeout: 30000,
+  skip: process.platform !== 'linux' ? 'Requires the shipped Linux OAuth helper; no implicit WSL' : false,
 }, async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-oauth-authorize-'))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))

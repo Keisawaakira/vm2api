@@ -45,7 +45,7 @@ export function openaiContentToClaudeContent(content) {
       if (p) blocks.push({ type: 'text', text: p })
       continue
     }
-    if (p?.type === 'text' || p?.type === 'input_text') {
+    if (p?.type === 'text' || p?.type === 'input_text' || p?.type === 'output_text') {
       const block = { type: 'text', text: p.text || '' }
       if (p.cache_control) block.cache_control = p.cache_control
       blocks.push(block)
@@ -55,6 +55,13 @@ export function openaiContentToClaudeContent(content) {
       const img = openaiImagePartToClaude(p)
       if (img) blocks.push(p.cache_control ? { ...img, cache_control: p.cache_control } : img)
       continue
+    }
+    if (p?.type === 'file') {
+      const match = String(p.file?.file_data || '').match(/^data:([^;]+);base64,(.+)$/s)
+      if (match) {
+        const doc = { type: 'document', source: { type: 'base64', media_type: match[1], data: match[2] } }
+        blocks.push(p.cache_control ? { ...doc, cache_control: p.cache_control } : doc)
+      }
     }
   }
 

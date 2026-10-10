@@ -1,0 +1,1 @@
+import{h as e}from"./button-CfIt8iL7.js";import{t}from"./queryOptions-D_KdOh1t.js";function n(n=`anthropic`){let r=n===`openai`?`?platform=openai`:`?platform=anthropic`;return t({queryKey:[`panel`,`model-policy`,n],queryFn:()=>e(`/api/panel/model-policy${r}`)})}function r(){return t({queryKey:[`panel`,`models`],queryFn:()=>e(`/api/panel/models`)})}export{r as n,n as t};

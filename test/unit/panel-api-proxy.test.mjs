@@ -168,6 +168,7 @@ test('vm detail exposes Go credential ownership and Rust kernel health', async (
   assert.deepEqual(detail.data.kernel, {
     telemetry: { enabled: null, running: null },
     process_topology: null,
+    cc_native_trace: { configured: false, enabled: false, raw_enabled: false, state: 'disabled', processes: [] },
     credential_owner: 'go',
     configured_engine: 'rust',
     resolved_engine: 'rust',

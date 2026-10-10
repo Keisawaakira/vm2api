@@ -8,6 +8,8 @@
  * A thinking block cut mid-way cannot be closed (it needs a signature).
  */
 
+import { isClientCancelledResult, isNegativeTerminalState } from '../core/errors.mjs'
+
 const CLOSABLE_BLOCKS = new Set(['text', 'tool_use'])
 
 function sse(event, data) {
@@ -75,7 +77,15 @@ export function createAnthropicStreamTracker() {
 
 /** A timeout would just stall again if the client retries. An upstream error event already reached the client. */
 export function isRecoverableTruncation(result) {
+  if (result?.ok || result?.status >= 400 || isClientCancelledResult(result)) return false
+  if (result?.terminalState && result.terminalState !== 'incomplete') return false
+  if (['x-terminal-state', 'x-kin-terminal-state'].some((key) => isNegativeTerminalState(result?.headers?.[key])))
+    return false
   const error = result?.body?.error
   if (!error) return true
-  return !/timeout/i.test(`${error.code || ''} ${error.type || ''} ${error.message || ''}`)
+  if (/timeout/i.test(`${error.code || ''} ${error.type || ''} ${error.message || ''}`)) return false
+  // Only a known transport truncation, never an explicit provider/worker error.
+  return /^(stream_incomplete|incomplete_response|ERR_STREAM_PREMATURE_CLOSE|ECONNRESET|worker_transport_error)$/i.test(
+    error.code || '',
+  )
 }

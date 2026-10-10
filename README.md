@@ -35,6 +35,8 @@
 
 # 🇨🇳 简体中文
 
+本 fork 默认从 **`Keisawaakira/vm2api` 的 `main` 拉源码并在部署机构建**，不依赖上游预构建镜像；安装目录任意。Windows 本地改动需先推送 fork，再在部署机更新，详见 [Fork / WSL 部署](docs/DEPLOY.md#fork--wsl-更新本次修复)。
+
 ## 目录
 - [💡 项目概览](#-项目概览)
 - [🆕 近期更新](#-近期更新)
@@ -185,16 +187,26 @@ vm2api 严格遵循行业最严苛的**纯净度基准**。入站请求不泄露
 ### 1. 一键脚本安装（推荐）
 
 ```bash
-# 生产环境一键拉取并安装
-curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash
-
-# 以后更新
-curl -sSL https://raw.githubusercontent.com/dofastted/vm2api/main/deploy/install.sh | sudo bash -s -- upgrade
+curl -fsSL https://raw.githubusercontent.com/Keisawaakira/vm2api/main/deploy/install.sh -o /tmp/vm2api-install.sh
+sudo bash /tmp/vm2api-install.sh install
+# 以后更新：重新下载上面的脚本，再执行
+sudo bash /tmp/vm2api-install.sh upgrade
+sudo bash /opt/vm2api/deploy/install.sh check
 ```
 
-ARM64（aarch64）主机用同一条命令，脚本自动选择 `-arm64` 控制面镜像并准备 QEMU；实验性支持，见 [docs/ARM64.md](docs/ARM64.md)。
+ARM64（aarch64）主机的源码构建使用 ARM64 控制面与 QEMU/amd64 槽位；实验性支持，见 [docs/ARM64.md](docs/ARM64.md)。本 fork 的 fixed/诊断功能仍须使用包含本分支文件的源码镜像，不能用上游原版镜像替代。
+
+管理台 **设置 → 关于** 仍对照上游 GitHub Release；fork 分支更新请用上述脚本，不要使用管理台的上游更新命令。
+
+**运行形态（不是一个父容器里一堆子进程）：**
+
+- Compose **只起 1 个** `vm2api` 控制面（面板、`/v1`、调度）
+- 每个**已启动**的槽另起 1 个宿主机容器 `kin-<槽>`（独立家目录 / 出口 / 指纹 / 遥测）
+- 未启动的槽不占容器。`docker ps` 里其它名字是同机别的项目，不是 vm2api
 
 ### 2. 手动 Docker Compose 启动
+
+**以下为上游预构建镜像示例，不包含本 fork 的修复：**
 
 ```bash
 mkdir -p /opt/vm2api && cd /opt/vm2api
@@ -207,6 +219,8 @@ docker compose pull && docker compose up -d
 ```
 
 ### 3. 访问与调用
+
+fork 手动构建：`docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build`（fork 一键脚本默认此模式）。
 
 服务启动后，系统暴露统一服务端口（默认 `8787`）：
 

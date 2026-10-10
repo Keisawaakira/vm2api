@@ -152,6 +152,35 @@ function money(value: unknown): number {
   return Number.isFinite(n) ? n : 0
 }
 
+export function CcNativeTraceReadiness({
+  value,
+}: {
+  value: VmKernelSnapshot['cc_native_trace']
+}) {
+  const enabled = value?.enabled && value.raw_enabled
+  const labels: Record<string, string> = {
+    ready: '已找到当前 CC 进程的预载记录',
+    preload_not_observed: '尚未看到预载启动记录',
+    restart_required: '预载记录与当前进程/脚本不匹配',
+    observed_unverified_process: '有预载记录，当前进程尚未核对',
+    disabled: '尚未配置预载入口',
+  }
+  return (
+    <div className='space-y-1 text-xs'>
+      <div>
+        {enabled
+          ? labels[value?.state || 'disabled'] || '状态未知'
+          : '尚未开启原始诊断或 CC 跟踪'}
+      </div>
+      <div className='text-muted-foreground'>
+        {enabled && value?.state === 'ready'
+          ? '可使用原来的 user key；请求需有效 Debug 模式和 stream:false，从日志下载完整 JSONL，具体仍以 native_trace.status 为准。'
+          : '开启日志设置后，在数据面页选中这台 VM，重新应用 CC 修复版并重启 kernel。刷新此页即可检查，无需发送模型请求。'}
+      </div>
+    </div>
+  )
+}
+
 export function VmStatusBoard(props: Props) {
   const {
     vm,
@@ -370,6 +399,12 @@ export function VmStatusBoard(props: Props) {
                 <Field label='内核' compact>
                   {isCodexVm(vm) ? '—' : dataplaneLabel(vm.resolved_dataplane)}
                 </Field>
+                {vm.resolved_dataplane === 'cc-fixed' ||
+                kernel?.cc_native_trace?.configured ? (
+                  <Field label='CC 原生跟踪' compact>
+                    <CcNativeTraceReadiness value={kernel?.cc_native_trace} />
+                  </Field>
+                ) : null}
                 <Field label='拓扑' compact>
                   {topologyLabel(topology)}
                   {topology?.go_telemetry ? ' · Go telemetry' : ''}

@@ -18,6 +18,21 @@ export function reasoningEffortOf(inbound) {
   return REASONING_EFFORTS.has(effort) ? effort : null
 }
 
+/** Presentation correction only; do not rewrite historical flags or unknown model suffixes. */
+export function thinkingSuffixOnlyModelChange(requested, upstream) {
+  if (!upstream) return false
+  const match = String(requested || '').match(/^(.*)\(\s*(\d+|-1|auto|none|minimal|low|medium|high|xhigh|max)\s*\)$/i)
+  if (!match || !/^claude-/i.test(match[1].split('/').filter(Boolean).pop() || '')) return false
+  const base = (value) =>
+    String(value)
+      .split('/')
+      .filter(Boolean)
+      .pop()
+      ?.replace(/\[1m\]$/i, '')
+      .toLowerCase()
+  return base(match[1]) === base(upstream)
+}
+
 const SESSION_ID_MAX = 200
 
 /** Caller session ids come from client headers/bodies; cap them before they hit an index. */

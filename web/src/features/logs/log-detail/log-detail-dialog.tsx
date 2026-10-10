@@ -33,9 +33,11 @@ const TAB_ICON = 'h-3.5 w-3.5 shrink-0 sm:h-4 sm:w-4'
 export function LogDetailDialog({
   state,
   onClose,
+  canViewRaw = false,
 }: {
   state: DetailState | null
   onClose: () => void
+  canViewRaw?: boolean
 }) {
   const [tab, setTab] = useState<DetailTab>('summary')
   useEffect(() => {
@@ -107,7 +109,11 @@ export function LogDetailDialog({
                   <PerformanceTab row={row} />
                 </TabsContent>
                 <TabsContent value='raw' className='mt-0'>
-                  <RawDataTab requestId={row.requestId} logMode={row.logMode} />
+                  <RawDataTab
+                    requestId={row.requestId}
+                    logMode={row.logMode}
+                    canViewRaw={canViewRaw}
+                  />
                 </TabsContent>
               </div>
             </Tabs>

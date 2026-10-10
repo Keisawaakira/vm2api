@@ -106,10 +106,19 @@ test('local egress hands the kernel the deployment proxy and fails closed on it'
 test('codex kernel starts without inherited proxy variables', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-codex-'))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
-  const out = path.join(root, 'env.txt')
-  const bin = path.join(root, 'fake-kernel')
-  fs.writeFileSync(bin, `#!/bin/sh\nenv > "${out}.tmp" && mv "${out}.tmp" "${out}"\n`, { mode: 0o755 })
-  setEnv(t, { HTTPS_PROXY: 'http://proxy.test:8443', no_proxy: 'chatgpt.com', KIN_CODEX_KERNEL_BIN: bin })
+  const out = path.join(root, 'env.json')
+  const preload = path.join(root, 'capture-env.cjs')
+  // Real child execution on both POSIX and Windows; record names, never secret values.
+  fs.writeFileSync(
+    preload,
+    `require('node:fs').writeFileSync(${JSON.stringify(out)}, JSON.stringify(Object.keys(process.env)));process.exit(0);`,
+  )
+  setEnv(t, {
+    HTTPS_PROXY: 'http://proxy.test:8443',
+    no_proxy: 'chatgpt.com',
+    KIN_CODEX_KERNEL_BIN: process.execPath,
+    NODE_OPTIONS: `--require "${preload.replaceAll('\\', '/')}"`,
+  })
   const exec = {
     vmId: 'vm-codex',
     homeDir: path.join(root, 'vm-codex', 'cli-home'),
@@ -118,10 +127,7 @@ test('codex kernel starts without inherited proxy variables', async (t) => {
   t.after(() => stopCodexKernel('vm-codex'))
   await ensureCodexKernel(exec, { timeoutMs: 300 })
   for (let i = 0; i < 40 && !fs.existsSync(out); i++) await new Promise((r) => setTimeout(r, 50))
-  const keys = fs
-    .readFileSync(out, 'utf8')
-    .split('\n')
-    .map((line) => line.split('=')[0])
+  const keys = JSON.parse(fs.readFileSync(out, 'utf8'))
   assert.ok(keys.includes('KIN_CODEX_KERNEL_BIN'))
   assert.deepEqual(
     keys.filter((k) => /_proxy$/i.test(k)),

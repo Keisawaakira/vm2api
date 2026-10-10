@@ -45,6 +45,7 @@ export function panelShellLaunch(cliBin) {
     'export CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"',
     // Same credentials.json as the host Refresher; a second refresher here would spend the shared RT.
     `export CLAUDE_CODE_HOST_REFRESH=1`,
+    'export CLAUDE_CODE_KIN_HOST_REFRESH=1',
     `export CLAUDE_CODE_VERSION=${OFFICIAL_CLI_VERSION}`,
     'export USER_TYPE=external',
     'mkdir -p "$CLAUDE_CONFIG_DIR"',
@@ -112,7 +113,13 @@ export function createSlotShell({ projectRoot, logger = console }) {
     const url = new URL(req.url || '/', 'http://local')
     const sm = SHELL_RE.exec(url.pathname)
     if (!sm) return false
-    const vmId = decodeURIComponent(sm[1])
+    let vmId
+    try {
+      vmId = decodeURIComponent(sm[1])
+    } catch {
+      rejectUpgrade(socket, 400, 'Bad Request')
+      return true
+    }
     if (!consumeTicket(url.searchParams.get('ticket') || '', vmId)) {
       rejectUpgrade(socket, 401, 'Unauthorized')
       return true
@@ -160,6 +167,8 @@ export function createSlotShell({ projectRoot, logger = console }) {
       if (msg?.t === 'd' && typeof msg.d === 'string') session.stream.write(msg.d)
       else if (msg?.t === 'r') resize(clampInt(msg.c, 10, 500, 80), clampInt(msg.r, 5, 200, 24))
     }
+    // Protocol/transport errors belong to this terminal, not the Node process.
+    ws.on('error', () => ws.close(1011))
     ws.on('message', (raw, isBinary) => {
       if (isBinary) return
       let msg

@@ -28,6 +28,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { requestedThinkingSetting } from '../log-badges'
 import { ThinkingEffortBadge } from '../log-cells'
 import {
   actualCacheRate,
@@ -122,6 +123,9 @@ export function SummaryTab({
   scrollToRedirect: boolean
 }) {
   const audit = resolveModelAuditDisplay(row)
+  const thinkingSetting = requestedThinkingSetting(
+    row.originalModel || row.model
+  )
   const success = isSuccessStatus(row.statusCode)
   const rate = calculateOutputRate(row.outputTokens, row.durationMs, row.ttftMs)
   const showRate =
@@ -293,6 +297,7 @@ export function SummaryTab({
       {row.sessionId ||
       row.clientSessionId ||
       row.reasoningEffort ||
+      thinkingSetting ||
       row.requestId ? (
         <div className='space-y-2'>
           <h4 className='text-sm font-semibold'>会话信息</h4>
@@ -335,10 +340,19 @@ export function SummaryTab({
                 </span>
               </div>
             ) : null}
+            {thinkingSetting ? (
+              <div className='space-y-1 p-4 text-xs'>
+                <p>思考后缀：{thinkingSetting.label}</p>
+                <p className='text-muted-foreground'>
+                  这是请求意图，不是实际用量，也不证明云端已执行；数字后缀优先于请求的
+                  reasoning_effort。
+                </p>
+              </div>
+            ) : null}
             {row.reasoningEffort ? (
               <div className='flex items-center gap-2 p-4'>
                 <span className='shrink-0 text-xs text-muted-foreground'>
-                  思考强度
+                  入站思考强度
                 </span>
                 <ThinkingEffortBadge effort={row.reasoningEffort} />
               </div>
@@ -419,6 +433,24 @@ export function SummaryTab({
                   <span className='text-orange-600'>(2x)</span>
                   <Cost value={costSplit.oneH} />
                 </BillingRow>
+              ) : null}
+              {(tokenSplit.unknown || 0) > 0 ? (
+                <BillingRow label='缓存写入（TTL 未细分）'>
+                  {formatTokenAmount(tokenSplit.unknown!)} tokens
+                </BillingRow>
+              ) : null}
+              {(costSplit.unallocated || 0) > 0 ? (
+                <BillingRow label='缓存写入费用合计（未分摊）'>
+                  <Cost value={costSplit.unallocated} />
+                </BillingRow>
+              ) : null}
+              {tokenSplit.fiveM > 0 &&
+              tokenSplit.oneH > 0 &&
+              !costSplit.unallocated ? (
+                <p className='text-xs text-muted-foreground'>
+                  两种 TTL 的费用为按观测 token
+                  比例分摊的展示估算，不是独立结算值。
+                </p>
               ) : null}
               {row.cacheReadInputTokens > 0 ? (
                 <BillingRow label='缓存读取'>

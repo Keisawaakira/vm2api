@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { requestLogQueryOptions } from '../queries'
+import { RawDebugPanel } from '../raw-debug-panel'
 
 type Section = {
   id: string
@@ -41,7 +42,12 @@ function sections(item: RequestLogItem): Section[] {
   const all: Section[] = [
     { id: 'inbound_body', label: '入站请求体', value: item.inbound_body },
     { id: 'headers', label: '入站请求头', value: item.headers },
-    { id: 'outbound_body', label: '出站请求体', value: item.outbound_body },
+    {
+      id: 'outbound_body',
+      label: 'Node 出站请求体',
+      value: item.outbound_body,
+      note: 'Node→kernel/API 的已解析视图；不是 CC 最终发往云端的请求。',
+    },
     {
       id: 'outbound_headers',
       label: '出站请求头',
@@ -49,7 +55,7 @@ function sections(item: RequestLogItem): Section[] {
     },
     {
       id: 'response_body',
-      label: '响应体',
+      label: '返回调用方的响应体',
       value: res?.body,
       note: res
         ? `${res.bytes.toLocaleString()} 字节${res.truncated ? ' · 已截断' : ''}`
@@ -93,7 +99,7 @@ function CopyButton({ text }: { text: string }) {
  * 「原始数据」页签：debug 采样记录（`/api/panel/request-logs/:id`）。
  * 只有 debug 模式落库的请求才有头/体；普通请求给出开启方式。
  */
-export function RawDataTab({
+function StandardDebugData({
   requestId,
   logMode,
 }: {
@@ -182,5 +188,25 @@ export function RawDataTab({
         </pre>
       </div>
     </div>
+  )
+}
+
+/** Protected exact capture has its own explicit-load query and never joins tenant debug data. */
+export function RawDataTab({
+  requestId,
+  logMode,
+  canViewRaw = false,
+}: {
+  requestId: string | null
+  logMode: 'normal' | 'debug' | null
+  canViewRaw?: boolean
+}) {
+  return (
+    <>
+      <StandardDebugData requestId={requestId} logMode={logMode} />
+      {canViewRaw && requestId ? (
+        <RawDebugPanel key={requestId} requestId={requestId} />
+      ) : null}
+    </>
   )
 }

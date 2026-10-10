@@ -1,0 +1,1 @@
+import{h as e}from"./button-CfIt8iL7.js";import{t}from"./queryOptions-D_KdOh1t.js";function n(n=!0){return t({queryKey:[`panel`,`me`],queryFn:()=>e(`/api/panel/me`),enabled:n,retry:!1})}export{n as t};
