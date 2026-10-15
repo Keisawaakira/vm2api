@@ -91,16 +91,19 @@ async function runUpgrade({ source = true, arch = 'amd64', override, env = {} } 
     fs.writeFileSync(path.join(root, 'src/config/routing.json'), 'operator config\n')
     if (source) fs.mkdirSync(path.join(root, '.git'))
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+    // The script runs in a POSIX container; use that path spelling even when
+    // this real loopback/fake-Docker harness is hosted by Windows Git Bash.
+    const shellRoot = root.split(path.sep).join('/')
     const args = [
       script,
-      root,
+      shellRoot,
       'custom-stack',
       'custom-control',
       'old-id',
       'v1.2.7',
       arch,
-      path.join(root, 'docker-compose.yml'),
-      path.join(root, override || 'docker-compose.override.yml'),
+      `${shellRoot}/docker-compose.yml`,
+      `${shellRoot}/${override || 'docker-compose.override.yml'}`,
     ]
     let result
     try {
@@ -124,7 +127,7 @@ async function runUpgrade({ source = true, arch = 'amd64', override, env = {} } 
     }
     return {
       ...result,
-      root,
+      root: shellRoot,
       calls: fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse) : [],
       env: fs.readFileSync(path.join(root, '.env'), 'utf8'),
       version: fs.readFileSync(path.join(root, 'VERSION'), 'utf8'),
@@ -140,10 +143,7 @@ test('source upgrade builds the backend, preserves overrides, recreates it, and 
   const result = await runUpgrade()
   assert.equal(result.code, 0, result.stderr)
   const build = result.calls.find((args) => args.includes('build'))
-  assert.match(
-    build.at(-1),
-    new RegExp(`${result.root}/docker-compose.override.yml:${result.root}/docker-compose.build.yml`),
-  )
+  assert.ok(build.at(-1).includes(`${result.root}/docker-compose.override.yml:${result.root}/docker-compose.build.yml`))
   assert.ok(build.includes('--project-name'))
   assert.ok(build.includes('custom-stack'))
   const up = result.calls.find((args) => args.includes('up'))
@@ -218,7 +218,7 @@ test('ARM64 source upgrade keeps the native override and rejects a missing one b
   const result = await runUpgrade({ arch: 'arm64', override: 'docker-compose.arm64.yml' })
   assert.equal(result.code, 0, result.stderr)
   const build = result.calls.find((args) => args.includes('build'))
-  assert.match(build.at(-1), new RegExp(`${result.root}/docker-compose.arm64.yml`))
+  assert.ok(build.at(-1).includes(`${result.root}/docker-compose.arm64.yml`))
   assert.doesNotMatch(build.at(-1), /docker-compose\.build\.yml/)
   const missing = await runUpgrade({ arch: 'arm64' })
   assert.equal(missing.code, 1)

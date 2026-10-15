@@ -19,6 +19,7 @@ import {
   ownerPred,
   totalTokens as rowTotalTokens,
 } from './usage-log-preds.mjs'
+import { thinkingSuffixOnlyModelChange } from '../../protocol/log-fields.mjs'
 
 const LIST_LIMIT_DEFAULT = 50
 const LIST_LIMIT_MAX = 100
@@ -133,7 +134,7 @@ function specialSettings(row) {
   if (row.stream) out.push({ key: 'stream', label: '流式' })
   if (row.has_tools) out.push({ key: 'tools', label: '工具调用' })
   if (row.log_mode === 'debug') out.push({ key: 'debug', label: '调试采样' })
-  if (row.model_mismatch === 1)
+  if (row.model_mismatch === 1 && !thinkingSuffixOnlyModelChange(row.requested_model, row.upstream_model))
     out.push({ key: 'mismatch', label: '模型重定向', value: `${row.requested_model} → ${row.upstream_model}` })
   if (row.speed === 'fast') out.push({ key: 'fast', label: 'Fast 模式', value: row.speed })
   if (row.service_tier === 'priority') out.push({ key: 'priority', label: 'Priority', value: row.service_tier })

@@ -2,6 +2,7 @@
  * Shared HTTP helpers for protocol and panel. SSE headers flush immediately
  * and optionally disable Nagle so Claude Code subagent tokens are not delayed.
  */
+import { isUtf8 } from 'node:buffer'
 import { ErrorCode, ErrorType, makeError } from '../core/errors.mjs'
 
 export const CORS_ALLOW_HEADERS =
@@ -64,12 +65,17 @@ function collectBody(req, maxBytes) {
   })
 }
 
-export function readBody(req, maxBytes) {
+export function readBody(req, maxBytes, onParsedRaw) {
   return collectBody(req, maxBytes).then((buf) => {
     const raw = buf.toString('utf8')
     if (!raw) return {}
     try {
-      return JSON.parse(raw)
+      const body = JSON.parse(raw)
+      // Only valid UTF-8 JSON text is evidence. Observer failure cannot reject inference.
+      try {
+        if (typeof onParsedRaw === 'function' && isUtf8(buf)) onParsedRaw(raw, body, buf.length)
+      } catch {}
+      return body
     } catch (e) {
       throw makeError({
         type: ErrorType.INVALID_REQUEST,

@@ -18,8 +18,16 @@ function makePool() {
 
 test('proxy pool persists custom dns_primary and rejects invalid URLs without changing it', (t) => {
   const dir = tmpDir()
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const opened = []
+  t.after(() => {
+    for (const pool of opened) {
+      pool.stopScheduler()
+      pool.db.close()
+    }
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
   const pool = new ProxyPool({ dataDir: dir })
+  opened.push(pool)
   pool.stopScheduler()
   assert.equal(pool.updateConfig({ dns_primary: '8.8.8.8:53' }).ok, true)
   const primary = 'https://cloudflare-dns.com:8443/dns-query?key=a%2Cb'
@@ -38,14 +46,23 @@ test('proxy pool persists custom dns_primary and rejects invalid URLs without ch
     assert.equal(pool.snapshot().config.dns_primary, primary)
   }
   const reopened = new ProxyPool({ dataDir: dir })
+  opened.push(reopened)
   reopened.stopScheduler()
   assert.equal(reopened.snapshot().config.dns_primary, primary)
 })
 
 test('DNS type suppression persists both toggle states and rejects non-booleans', (t) => {
   const dir = tmpDir()
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const opened = []
+  t.after(() => {
+    for (const pool of opened) {
+      pool.stopScheduler()
+      pool.db.close()
+    }
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
   const pool = new ProxyPool({ dataDir: dir })
+  opened.push(pool)
   pool.stopScheduler()
   assert.equal(pool.snapshot().config.dns_disable_svcb_https, false)
   assert.equal(pool.updateConfig({ dns_disable_svcb_https: true }).ok, true)
@@ -56,10 +73,12 @@ test('DNS type suppression persists both toggle states and rejects non-booleans'
     assert.equal(pool.snapshot().config.dns_primary, 'auto')
   }
   const reopened = new ProxyPool({ dataDir: dir })
+  opened.push(reopened)
   reopened.stopScheduler()
   assert.equal(reopened.snapshot().config.dns_disable_svcb_https, true)
   assert.equal(reopened.updateConfig({ dns_disable_svcb_https: false }).ok, true)
   const disabled = new ProxyPool({ dataDir: dir })
+  opened.push(disabled)
   disabled.stopScheduler()
   assert.equal(disabled.snapshot().config.dns_disable_svcb_https, false)
 })

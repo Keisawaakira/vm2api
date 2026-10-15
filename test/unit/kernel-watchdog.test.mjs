@@ -6,6 +6,24 @@ import test from 'node:test'
 import { createKernelWatchdog, isKernelWatchdogTarget } from '../../src/lib/transport/kernel-watchdog.mjs'
 import { kernelFaults } from '../../src/lib/transport/rust-kernel-client.mjs'
 
+test('server binds telemetry healing only outside the mock gateway', () => {
+  const source = fs.readFileSync(new URL('../../src/server.mjs', import.meta.url), 'utf8')
+  const expression = source.match(/ensureTelemetry:\s*([\s\S]*?),\n\s*onFault:/)?.[1]
+  assert.ok(expression)
+  const bind = new Function('isCrsMock', 'ensureTelemetrySidecar', 'cfg', `return (${expression})`)
+  const calls = []
+  const ensure = (options) => calls.push(options)
+  const cfg = { paths: { project: '/fixture-project' } }
+  assert.equal(
+    bind(() => true, ensure, cfg),
+    null,
+  )
+  assert.equal(calls.length, 0)
+  const vm = { id: 'fixture-vm' }
+  bind(() => false, ensure, cfg)(vm)
+  assert.deepEqual(calls, [{ projectRoot: '/fixture-project', vm }])
+})
+
 test('watchdog targets inherited rust; stored go is rust; skips Codex and stopped', () => {
   const rustRouting = { inference: { engine: 'rust' } }
   assert.equal(isKernelWatchdogTarget({ id: 'vm-01' }, rustRouting), true)

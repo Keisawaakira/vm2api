@@ -86,11 +86,11 @@ export const DEFAULT_PERSONA_TEMPLATES = Object.freeze({
     }),
     Object.freeze({
       id: 'agent',
-      note: '常驻约束 + 调用方官方提示词。空则丢弃。1h 断点在本块，排在会变的第5段之前。',
+      note: '常驻约束 + 调用方官方提示词。空则丢弃。断点在本块，排在会变的第5段之前；TTL 跟随缓存策略。',
       drop_if_empty: true,
       type: 'text',
       text: '{{agent_standing}}{{caller_agent}}',
-      cache_control: Object.freeze({ type: 'ephemeral', ttl: '1h', scope: 'global' }),
+      cache_control: Object.freeze({ type: 'ephemeral', scope: 'global' }),
     }),
     Object.freeze({
       id: 'env',
@@ -122,17 +122,17 @@ export const DEFAULT_PERSONA_TEMPLATES = Object.freeze({
     }),
     Object.freeze({
       id: 'agent_official',
-      note: '常驻约束为第一段 + 官方 Claude Code 基础提示词全文。2.1.263 起 1h global 缓存',
+      note: '常驻约束为第一段 + 官方 Claude Code 基础提示词全文。TTL 跟随缓存策略',
       type: 'text',
       text: '{{agent_standing}}{{agent_official}}',
-      cache_control: Object.freeze({ type: 'ephemeral', ttl: '1h', scope: 'global' }),
+      cache_control: Object.freeze({ type: 'ephemeral', scope: 'global' }),
     }),
     Object.freeze({
       id: 'env_official',
-      note: '官方 continuation + Environment。2.1.263 起 1h 缓存，无 scope',
+      note: '官方 continuation + Environment。TTL 跟随缓存策略，无 scope',
       type: 'text',
       text: '{{env_official}}',
-      cache_control: Object.freeze({ type: 'ephemeral', ttl: '1h' }),
+      cache_control: Object.freeze({ type: 'ephemeral' }),
     }),
     Object.freeze({
       id: 'caller_system',
@@ -160,7 +160,7 @@ export const DEFAULT_PERSONA_TEMPLATES = Object.freeze({
       hide: true,
       type: 'text',
       text: '{{agent_standing}}',
-      cache_control: Object.freeze({ type: 'ephemeral', ttl: '1h' }),
+      cache_control: Object.freeze({ type: 'ephemeral' }),
     }),
     Object.freeze({
       id: 'env',

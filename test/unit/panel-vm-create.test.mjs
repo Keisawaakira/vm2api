@@ -221,6 +221,8 @@ test('create binds an explicitly chosen exit instead of auto-allocating', async 
       'the healthier SOCKS row must stay free',
     )
   } finally {
+    pool.stopScheduler()
+    pool.db.close()
     fs.rmSync(root, { recursive: true, force: true })
   }
 })
@@ -265,6 +267,8 @@ test('create refuses an unknown or full exit before writing the slot', async () 
     assert.equal(full.response.status, 409)
     assert.equal(fs.existsSync(path.join(root, 'vms', 'vm-x.json')), false)
   } finally {
+    pool.stopScheduler()
+    pool.db.close()
     fs.rmSync(root, { recursive: true, force: true })
   }
 })

@@ -205,6 +205,13 @@ export function defaultUpgradeCommand() {
   return upgradeCommand()
 }
 
+function forkSourceUpgradeCommand(root) {
+  if (!fs.existsSync(path.join(projectRoot(root), 'src/lib/vm/wrap-fixed.mjs'))) return null
+  // The fork is delivered as a branch; an upstream version tag does not contain
+  // its fixed registry, CPA conversion or diagnostics. Never silently drop them.
+  return 'curl -sSL https://raw.githubusercontent.com/Keisawaakira/vm2api/test/deploy/install.sh | sudo bash -s -- upgrade --ref test'
+}
+
 export function githubApiHeaders(accept = 'application/vnd.github+json') {
   const headers = {
     Accept: accept,
@@ -304,7 +311,7 @@ export async function buildUpdateStatus({ projectRoot: root, currentVersion, upg
     notes: remote.release?.notes || newer[0]?.title || '',
     changelog: newer,
     needs_wrap_cli_sync: needsWrap,
-    upgrade_command: upgradeCommand(updateAvailable ? latest : ''),
+    upgrade_command: forkSourceUpgradeCommand(project) || upgradeCommand(updateAvailable ? latest : ''),
     check_command: `sudo bash ${hostRoot(root)}/deploy/install.sh check`,
     repo: GITHUB_REPO,
     source_error: remote.error,
@@ -468,7 +475,8 @@ export async function startHostUpgrade({
       error: { message: '无效版本', code: 'invalid_version' },
     }
   }
-  const command = upgradeCommand(target)
+  const forkCommand = forkSourceUpgradeCommand(root)
+  const command = forkCommand || upgradeCommand(target)
   if (!confirm) {
     return {
       status: 200,
@@ -479,6 +487,18 @@ export async function startHostUpgrade({
     return {
       status: 200,
       data: { ...status, started: false, target, command, message: 'already_latest' },
+    }
+  }
+  if (forkCommand) {
+    return {
+      status: 409,
+      error: {
+        code: 'host_upgrade_required',
+        message: '当前 fork 包含修复版和专属转换，不能按上游版本标签覆盖；请在宿主机使用 fork 分支升级命令',
+        command,
+        target,
+      },
+      data: { ...status, started: false, target, command },
     }
   }
   const options = { dockerBin, sock, containerized, hostname, env, execFileImpl }

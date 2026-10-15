@@ -667,13 +667,17 @@ test('maxConcurrency 8 is the actual reserve cap', async (t) => {
 
 test('unpinned slot follows live tier concurrency after reloadConfig', async (t) => {
   const root = project()
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  let accountQuota
+  t.after(() => {
+    accountQuota?.db?.close?.()
+    fs.rmSync(root, { recursive: true, force: true })
+  })
   const file = path.join(root, 'vms', 'vm-01.json')
   const vm = JSON.parse(fs.readFileSync(file, 'utf8'))
   vm.policy.maxConcurrency = 2
   vm.policy.concurrencyOverride = false
   fs.writeFileSync(file, JSON.stringify(vm))
-  const accountQuota = new AccountQuota({
+  accountQuota = new AccountQuota({
     dataDir: path.join(root, 'data'),
     config: { tiers: { max: { max_concurrency: 2, max_rpm: 0 } } },
     accounts: [{ account_id: 'account-1', vm_id: 'vm-01', max_concurrency: 2 }],

@@ -1,0 +1,203 @@
+{
+  "version": 1,
+  "id": "wrap-fixed-v1152-r1",
+  "status": "owner_approved",
+  "production_approved": true,
+  "dataplane": "wrap-fixed",
+  "kernel_policy": "shared_upstream",
+  "approval_scope": "cli_only",
+  "approval": {
+    "date": "2026-10-12",
+    "basis": "owner-authorized locally verified fixed maintenance",
+    "scope": "stock request assembly/beta compatibility with caller-system repairs and CC behavior retention; no cloud/Linux acceptance"
+  },
+  "lineage": {
+    "source_file": "share/wrap-cli/cli-node",
+    "source_sha256": "c1316b7dd68490f56dde84ed1c7591591899cded321174a45f7cf954ea48465b",
+    "upstream_cli_sha256": "c1316b7dd68490f56dde84ed1c7591591899cded321174a45f7cf954ea48465b",
+    "original_cc_sha256": "be5eec49a78345dd935e302e88c9d7ad0afbb09a195356d81be1bdea766f3960",
+    "previous_release": "wrap-fixed-v1134-r1",
+    "classifier_reference_commit": "fe4b23a",
+    "refresh_reference_commit": "cb585bb6",
+    "kernel_wire_reference_commit": "18188710",
+    "request_wire_reference_commit": "af30a588",
+    "assembly_reference_commit": "5278867caab0eda00988fbe15f7df3dce239fa61"
+  },
+  "cache_contract": "node_dual_anchor_v1",
+  "supported_layouts": [
+    "zero",
+    "identity"
+  ],
+  "artifacts": {
+    "cli-node": {
+      "file": "cli-node",
+      "bytes": 27172972,
+      "sha256": "2a7a0b1b4063dadb884929b489b4901cf66d9be3a87d91da54a4875cf247463b",
+      "unpacked_bytes": 111204480,
+      "unpacked_sha256": "6b62820e7ac74a0eaee93f6a85b3ec913ace31a01fb6700b54dfa2dc520dea03",
+      "source_packed_sha256": "c1316b7dd68490f56dde84ed1c7591591899cded321174a45f7cf954ea48465b",
+      "source_unpacked_sha256": "6fe648bf1b4969a4f5ada1760d502a77af8bc6f9922d14c368d68739cf60d164",
+      "patches": [
+        {
+          "id": "caller-system-snapshot",
+          "offset": 108643915,
+          "bytes": 1381,
+          "replacement_bytes": 1062,
+          "before_sha256": "f5422160f38bf4ec8c6f4440309b282da81dbdaf21549b49cb1e4ccf7a6cee79",
+          "after_sha256": "1ea09ff27ad8c07d287a91e2b35e432e34c2434fdf9f371c537d99472f76323b"
+        },
+        {
+          "id": "caller-system-blocks",
+          "offset": 108656133,
+          "bytes": 2503,
+          "replacement_bytes": 2378,
+          "before_sha256": "942b584d961fdd25186453c1f7b781eee15da2607a0f67b59a1e4e2c6ae80c80",
+          "after_sha256": "d0d65848088ef0f7f3ab7b1a60661e907c5a244f8452837d7c4334201b958fdf"
+        }
+      ],
+      "validations": {
+        "elf_graph": true,
+        "no_bytecode": true,
+        "unchanged_outside_js_spans": true,
+        "syntax": true,
+        "native_bindings_resolved": true,
+        "upx_integrity": true,
+        "exact_unpack_roundtrip": true
+      }
+    }
+  },
+  "tools": {
+    "upx": "upx 5.0.1",
+    "bun": "1.3.14"
+  },
+  "patches_sha256": "0dbecf57fbf78631bff60c29353de1716954f86487641fa22479c3eda9e27f64",
+  "semantics_sha256": "2632af8ee0754daf50c4aa780b71d84de173a17bdd1ff04beb536afebeba48d1",
+  "local_validation": {
+    "completed": true,
+    "native_execution": false,
+    "behavior_tests": 858,
+    "full_source_scope_audit": {
+      "native_unresolved": [],
+      "whole_unresolved": [
+        "AggregateError",
+        "ArrayBuffer",
+        "AsyncIterator",
+        "Atomics",
+        "BigInt",
+        "BigInt64Array",
+        "BigUint64Array",
+        "Blob",
+        "DOMException",
+        "DataView",
+        "DedicatedWorkerGlobalScope",
+        "Deno",
+        "EdgeRuntime",
+        "EvalError",
+        "Event",
+        "EventTarget",
+        "File",
+        "FileReader",
+        "FinalizationRegistry",
+        "Float16Array",
+        "Float32Array",
+        "Float64Array",
+        "FormData",
+        "Function",
+        "Int16Array",
+        "Int32Array",
+        "Int8Array",
+        "Intl",
+        "Iterator",
+        "MACRO",
+        "MessageChannel",
+        "MessageEvent",
+        "MutationObserver",
+        "Proxy",
+        "RangeError",
+        "ReadableStream",
+        "ReferenceError",
+        "Reflect",
+        "Request",
+        "Response",
+        "SharedArrayBuffer",
+        "SuppressedError",
+        "SyntaxError",
+        "TextDecoderStream",
+        "TransformStream",
+        "TypeError",
+        "URIError",
+        "Uint16Array",
+        "Uint32Array",
+        "Uint8ClampedArray",
+        "WeakRef",
+        "WebSocket",
+        "WorkerGlobalScope",
+        "XMLHttpRequest",
+        "__REACT_DEVTOOLS_GLOBAL_HOOK__",
+        "atob",
+        "btoa",
+        "clearImmediate",
+        "clearInterval",
+        "crypto",
+        "decodeURI",
+        "decodeURIComponent",
+        "define",
+        "document",
+        "encodeURI",
+        "encodeURIComponent",
+        "escape",
+        "eval",
+        "gate",
+        "getAntModelOverrideConfig",
+        "getAntModels",
+        "global",
+        "isFinite",
+        "isNaN",
+        "localStorage",
+        "module__cloneBuffer",
+        "module__nodeUtil",
+        "module_isBuffer",
+        "navigator",
+        "parseFloat",
+        "parseInt",
+        "reportError",
+        "resolveAntModel",
+        "self",
+        "setImmediate",
+        "setInterval",
+        "unescape",
+        "window"
+      ],
+      "session_bindings": [
+        {
+          "name": "init_jobSession",
+          "declared": true
+        },
+        {
+          "name": "getJobSessionId",
+          "declared": true
+        },
+        {
+          "name": "runWithJobSession",
+          "declared": true
+        },
+        {
+          "name": "AsyncLocalStorage",
+          "declared": true
+        }
+      ]
+    },
+    "scope": "actual native/bridge/API/helpers with mocked external boundaries; not Linux ELF/provider execution"
+  },
+  "limitations": [
+    "No Linux ELF/kernel/provider execution",
+    "No guarantee of quota savings, thinking or format compliance",
+    "Stock/non-kin behavior unchanged; only zero/identity native path has caller snapshot guarantee"
+  ],
+  "inherited_repairs": [],
+  "native_lifecycle_contract": "nonblocking_cancel_v1",
+  "classifier_contract": "native_request_context_v1",
+  "native_wire_contract": "unprefixed_native_v2",
+  "request_wire_contract": "model_field_gates_v1",
+  "request_assembly_contract": "caller_optional_fields_v1"
+}

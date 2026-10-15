@@ -151,6 +151,7 @@ function releaseFetch(
     cliBytes = fakeElf64Amd64('github-cli-node'),
     ccBytes = fakeElf64Amd64('github-cc-node'),
     cragBytes = fakeElf64Amd64('github-crag'),
+    includeCli = true,
     status = 200,
   } = {},
 ) {
@@ -166,11 +167,15 @@ function releaseFetch(
               size: assetBytes.length,
               url: 'https://api.github.com/repos/dofastted/vm2api/releases/assets/9',
             },
-            {
-              name: 'cli-node',
-              size: cliBytes.length,
-              url: 'https://api.github.com/repos/dofastted/vm2api/releases/assets/8',
-            },
+            ...(includeCli
+              ? [
+                  {
+                    name: 'cli-node',
+                    size: cliBytes.length,
+                    url: 'https://api.github.com/repos/dofastted/vm2api/releases/assets/10',
+                  },
+                ]
+              : []),
             {
               name: 'cc-node',
               size: ccBytes.length,
@@ -192,11 +197,8 @@ function releaseFetch(
         headers: { 'content-length': String(assetBytes.length) },
       })
     }
-    if (href.endsWith('/releases/assets/8')) {
-      return new Response(cliBytes, {
-        status: 200,
-        headers: { 'content-length': String(cliBytes.length) },
-      })
+    if (href.endsWith('/releases/assets/10')) {
+      return new Response(cliBytes, { status, headers: { 'content-length': String(cliBytes.length) } })
     }
     if (href.endsWith('/releases/assets/7')) {
       return new Response(ccBytes, {
@@ -252,16 +254,18 @@ test('github kernel release replaces host kernel and syncs stopped slots', async
     assert.equal(response.status, 200, JSON.stringify(response.body))
     assert.equal(response.body.data.release.tag, 'v1.2.3')
     assert.equal(response.body.data.sync.items[0].kernel.reason, 'vm_stopped')
+    const cliBytes = fakeElf64Amd64('github-cli-node')
+    assert.equal(response.body.data.release.cli_node, 'cli-node')
+    assert.ok(fs.readFileSync(path.join(project, 'share', 'wrap-cli', 'cli-node')).equals(cliBytes))
+    assert.ok(
+      fs.readFileSync(path.join(project, 'vms', 'legacy-slot', 'cli-home', '.kin', 'cli-node')).equals(cliBytes),
+    )
     assert.ok(fs.readFileSync(path.join(project, 'bin', 'kin-kernel')).equals(elf))
     assert.ok(fs.readFileSync(path.join(project, 'share', 'wrap-cli', 'kin-kernel.bin')).equals(elf))
-    assert.ok(
-      fs.readFileSync(path.join(project, 'share', 'wrap-cli', 'cli-node')).equals(fakeElf64Amd64('github-cli-node')),
-    )
     assert.ok(
       fs.readFileSync(path.join(project, 'share', 'wrap-cli', 'cc-node')).equals(fakeElf64Amd64('github-cc-node')),
     )
     assert.ok(fs.readFileSync(path.join(project, 'share', 'crag', 'kin-kernel')).equals(fakeElf64Amd64('github-crag')))
-    assert.equal(response.body.data.release.cli_node, 'cli-node')
     assert.equal(response.body.data.release.cc_node, 'cc-node')
     assert.ok(
       fs.readFileSync(path.join(project, 'vms', 'legacy-slot', 'cli-home', '.kin', 'kin-kernel.bin')).equals(elf),
@@ -293,7 +297,31 @@ test('github kernel release does not write a non-ELF payload', async () => {
     assert.equal(response.status, 400)
     assert.equal(response.body.error.code, 'kernel_not_elf')
     assert.equal(fs.existsSync(path.join(project, 'bin', 'kin-kernel')), false)
+    assert.equal(fs.readFileSync(path.join(project, 'share', 'wrap-cli', 'cli-node'), 'utf8'), 'cli-node')
   } finally {
     fs.rmSync(project, { recursive: true, force: true })
   }
 })
+
+for (const [code, options] of [
+  ['cli_node_asset_missing', { includeCli: false }],
+  ['cli_node_not_elf', { cliBytes: Buffer.alloc(64, 0x41) }],
+]) {
+  test(`paired release rejects ${code} before installing either binary`, async () => {
+    const project = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-panel-release-pair-'))
+    try {
+      seedWrapTemplate(project)
+      const { response, handlePanel } = panelFor(project, {
+        fetchImpl: releaseFetch(fakeElf64Amd64('github-kernel'), options),
+      })
+      await handlePanel({ method: 'POST' }, {}, new URL('http://localhost/api/panel/wrap-cli/kernel/release'))
+      assert.equal(response.status, 400)
+      assert.equal(response.body.error.code, code)
+      assert.equal(fs.existsSync(path.join(project, 'bin', 'kin-kernel')), false)
+      assert.equal(fs.readFileSync(path.join(project, 'share', 'wrap-cli', 'kin-kernel'), 'utf8'), 'kin-kernel')
+      assert.equal(fs.readFileSync(path.join(project, 'share', 'wrap-cli', 'cli-node'), 'utf8'), 'cli-node')
+    } finally {
+      fs.rmSync(project, { recursive: true, force: true })
+    }
+  })
+}

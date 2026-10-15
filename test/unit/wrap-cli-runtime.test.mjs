@@ -56,7 +56,7 @@ function fakeElf64Amd64(payload = 'host-kernel') {
   return buf
 }
 
-test('materializeWrapCli copies both CLIs into slot home', () => {
+test('materializeWrapCli copies both CLIs into slot home', async (t) => {
   const project = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-wrap-cli-'))
   try {
     seedTemplate(project)
@@ -68,8 +68,10 @@ test('materializeWrapCli copies both CLIs into slot home', () => {
     assert.equal(fs.existsSync(path.join(dest, WRAP_CLI_BIN)), true)
     assert.equal(fs.readFileSync(path.join(dest, CC_NODE_BIN), 'utf8'), 'cc-node')
     assert.equal(fs.existsSync(path.join(dest, 'kin-kernel')), true)
-    const mode = fs.statSync(path.join(dest, WRAP_CLI_BIN)).mode & 0o111
-    assert.ok(mode !== 0)
+    await t.test('POSIX executable bits', { skip: process.platform === 'win32' }, () => {
+      const mode = fs.statSync(path.join(dest, WRAP_CLI_BIN)).mode & 0o111
+      assert.ok(mode !== 0)
+    })
   } finally {
     fs.rmSync(project, { recursive: true, force: true })
   }

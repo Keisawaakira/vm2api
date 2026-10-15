@@ -23,6 +23,20 @@ test('a cut tool call closes as max_tokens and a thinking block does not', () =>
   assert.equal(thinking.closingEvents(), null)
 })
 
+test('explicit failures and kernel failure metadata are never repaired as max_tokens', () => {
+  for (const result of [
+    { ok: false, status: 401 },
+    { ok: false, terminalState: 'error' },
+    { ok: false, terminalState: 'cancelled' },
+    { ok: false, headers: { 'x-terminal-state': 'failed' } },
+    { ok: false, headers: { 'x-kin-terminal-state': 'incomplete' } },
+    { ok: false, body: { error: { code: 'worker_terminal_failure' } } },
+    { ok: false, body: { error: { code: 'authentication_error' } } },
+    { ok: false, body: { error: { type: 'overloaded_error', message: 'try again' } } },
+  ]) assert.equal(isRecoverableTruncation(result), false, JSON.stringify(result))
+  assert.equal(isRecoverableTruncation({ ok: false, terminalState: 'incomplete', body: { error: { code: 'ERR_STREAM_PREMATURE_CLOSE' } } }), true)
+})
+
 test('a worker timeout is not closed as max_tokens', () => {
   assert.equal(isRecoverableTruncation({ ok: false }), true)
   assert.equal(

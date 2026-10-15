@@ -70,7 +70,9 @@ test('OpenAI chat and responses tools get eager on the outbound Anthropic body',
     const tools = byName(out.tools)
     assert.equal(tools.Write.eager_input_streaming, true)
     assert.equal(tools.Edit.eager_input_streaming, false)
-    assert.equal(tools.web_search.eager_input_streaming, undefined)
+    if (protocol === 'openai.chat')
+      assert.equal(tools.web_search, undefined, 'CPA Chat does not infer native server tools')
+    else assert.equal(tools.web_search.eager_input_streaming, undefined)
   }
 })
 

@@ -3,6 +3,7 @@
  * Usage reaching this module is treated as DISJOINT after normalizeUsage:
  * input_tokens excludes cache read/write.
  */
+import { cacheCreationUsage } from '../protocol/cache-usage.mjs'
 import { extractOpenaiUsage, isOpenaiWireUsage } from '../protocol/openai-usage.mjs'
 import { resolvePrice } from './price-catalog.mjs'
 
@@ -110,18 +111,6 @@ function round8(v) {
   return Math.round((Number(v) || 0) * 1e8) / 1e8
 }
 
-function cacheSplit(u) {
-  let cache5m = n(u.cache_creation_5m_tokens ?? u.cache_creation?.ephemeral_5m_input_tokens)
-  let cache1h = n(u.cache_creation_1h_tokens ?? u.cache_creation?.ephemeral_1h_input_tokens)
-  const cacheCreate = n(u.cache_creation_tokens ?? u.cache_creation_input_tokens)
-  if (!cache5m && !cache1h && cacheCreate) {
-    // Explicit TTL only — never DEFAULT_CACHE_TTL (which is 1h for upstream).
-    if (u.cache_ttl === '1h') cache1h = cacheCreate
-    else cache5m = cacheCreate
-  }
-  return { cache5m, cache1h, cacheCreate }
-}
-
 function emptyCost(extra = {}) {
   return {
     price_source: extra.price_source ?? null,
@@ -137,6 +126,7 @@ function emptyCost(extra = {}) {
     cache_creation_cost: 0,
     cache_creation_5m_cost: 0,
     cache_creation_1h_cost: 0,
+    cache_creation_unclassified_cost: 0,
     web_search_cost: 0,
     total_cost: 0,
     ...extra,
@@ -184,15 +174,17 @@ export function calculateCost(usage = {}, model = null) {
   const resolved = resolvePrice(mid)
   const outputTokens = n(u.output_tokens)
   const cacheRead = n(u.cache_read_tokens)
-  const { cache5m, cache1h } = cacheSplit(u)
+  const cacheUsage = cacheCreationUsage(u)
+  const cache5m = n(cacheUsage.cache_creation_5m_tokens)
+  const cache1h = n(cacheUsage.cache_creation_1h_tokens)
+  const cacheUnclassified = n(cacheUsage.cache_creation_unclassified_tokens)
   const inputTokens = n(u.input_tokens)
   const webSearchRequests = n(u.web_search_requests)
   const tokens = {
     input_tokens: inputTokens,
     output_tokens: outputTokens,
     cache_read_tokens: cacheRead,
-    cache_creation_5m_tokens: cache5m,
-    cache_creation_1h_tokens: cache1h,
+    ...cacheUsage,
     web_search_requests: webSearchRequests,
   }
 
@@ -225,7 +217,7 @@ export function calculateCost(usage = {}, model = null) {
     mode = 'fast'
   }
 
-  const prompt = inputTokens + cacheRead + cache5m + cache1h
+  const prompt = inputTokens + cacheRead + cache5m + cache1h + cacheUnclassified
   const selected = selectBand(price, mode, prompt)
   if (selected.unpriced) {
     return emptyCost({
@@ -247,7 +239,10 @@ export function calculateCost(usage = {}, model = null) {
   const cache_read_cost = usd(cacheRead, rates.cache_read)
   const cache_creation_5m_cost = usd(cache5m, rates.cache_5m)
   const cache_creation_1h_cost = usd(cache1h, rates.cache_1h)
-  const cache_creation_cost = cache_creation_5m_cost + cache_creation_1h_cost
+  // A requested TTL is not a measurement. Keep unknown writes labeled;
+  // only their conservative estimate uses the short-write catalog rate.
+  const cache_creation_unclassified_cost = usd(cacheUnclassified, rates.cache_5m)
+  const cache_creation_cost = cache_creation_5m_cost + cache_creation_1h_cost + cache_creation_unclassified_cost
   const web_search_cost = webSearchRequests * (price.per_call?.web_search || 0)
   const total_cost = input_cost + output_cost + cache_read_cost + cache_creation_cost + web_search_cost
   const speed = selected.mode === 'fast' ? 'fast' : 'standard'
@@ -271,6 +266,7 @@ export function calculateCost(usage = {}, model = null) {
     cache_creation_cost: round8(cache_creation_cost),
     cache_creation_5m_cost: round8(cache_creation_5m_cost),
     cache_creation_1h_cost: round8(cache_creation_1h_cost),
+    cache_creation_unclassified_cost: round8(cache_creation_unclassified_cost),
     web_search_cost: round8(web_search_cost),
     total_cost: round8(total_cost),
   }

@@ -69,17 +69,57 @@ export function normalizePanelError(
 ): NormalizedPanelError {
   const body = asRecord(payload)
   const error = asRecord(body?.error)
-  const message = String(error?.message || body?.message || fallback)
+  let message = String(error?.message || body?.message || fallback)
   const type = error?.type == null ? undefined : String(error.type)
   const code = error?.code == null ? undefined : String(error.code)
+  const runtime =
+    code === 'dataplane_sync_failed' ? asRecord(body?.dataplane_runtime) : null
+  let syncDetails: Record<string, unknown> | undefined
+  if (runtime) {
+    const text = (value: unknown, limit: number) =>
+      typeof value === 'string'
+        ? value.replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, limit)
+        : ''
+    const items = Array.isArray(runtime.items) ? runtime.items : []
+    const failures = items
+      .map(asRecord)
+      .filter((item) => item?.ok === false)
+      .slice(0, 3)
+    const lines = failures.map((item) => {
+      const kernel = asRecord(item?.kernel)
+      return [
+        text(item?.id, 80),
+        text(item?.code, 80),
+        text(kernel?.reason, 80),
+        text(item?.error || kernel?.error, 240),
+      ]
+        .filter(Boolean)
+        .join(' · ')
+    })
+    if (!lines.length && runtime.error) lines.push(text(runtime.error, 240))
+    message = [
+      body?.routing_committed === true
+        ? '配置已保存，但数据面同步/重启失败。'
+        : message,
+      ...lines,
+      '请到「数据面」对失败槽执行同步并重启；不要把保存成功当作已生效。',
+    ].join('\n')
+    syncDetails = {
+      ...asRecord(error?.details),
+      routing_committed: body?.routing_committed === true,
+      dataplane_runtime: runtime,
+    }
+  }
   return {
     message,
     status,
     ...(type ? { type } : {}),
     ...(code ? { code } : {}),
-    ...(Object.prototype.hasOwnProperty.call(error || {}, 'details')
-      ? { details: error?.details }
-      : {}),
+    ...(syncDetails
+      ? { details: syncDetails }
+      : Object.prototype.hasOwnProperty.call(error || {}, 'details')
+        ? { details: error?.details }
+        : {}),
     ...(Object.prototype.hasOwnProperty.call(error || {}, 'checks')
       ? { checks: error?.checks }
       : {}),

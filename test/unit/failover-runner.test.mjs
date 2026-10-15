@@ -101,6 +101,55 @@ test('unsupported classifier runtime stops without counting execution or cooling
   assert.equal(scheduler.selectCalls, 1)
 })
 
+for (const previousExecutions of [0, 2]) {
+  test(`selected-account block after ${previousExecutions} prior executions adds no dispatch or hop`, async () => {
+    const scheduler = new Scheduler([candidate(1), candidate(2)])
+    const select = scheduler.selectAndReserve.bind(scheduler)
+    let releases = 0
+    scheduler.selectAndReserve = async (options) => {
+      const selected = await select(options)
+      return selected.ok ? { ...selected, release: () => releases++ } : selected
+    }
+    const attempts = new Attempts()
+    const runner = new FailoverRunner({ scheduler, attemptsRepo: attempts })
+    let calls = 0
+    const result = await runner.run({
+      requestId: `scope-block-${previousExecutions}`,
+      model: 'claude-opus-4-6',
+      canonicalBody: { model: 'claude-opus-4-6' },
+      applyAttempt: (body, selected) => {
+        if (!previousExecutions || selected.accountId === 'account-2')
+          throw Object.assign(new Error('response already sent'), { code: 'response_sent' })
+        return body
+      },
+      callAttempt: () => {
+        calls++
+        return {
+          ok: false,
+          status: 429,
+          rust_execution_count: previousExecutions,
+          terminalState: 'rejected',
+          body: { error: { type: 'rate_limit_error', message: '5h exhausted' } },
+          headers: { 'anthropic-ratelimit-unified-5h-status': 'rejected' },
+        }
+      },
+    })
+    assert.equal(result.ok, false)
+    assert.equal(result.responseSent, true)
+    assert.equal(result.status, 403)
+    assert.equal(result.finalState, 'policy_block')
+    assert.equal(result.attemptCount, previousExecutions ? 1 : 0, 'the block does not add a dispatch hop')
+    assert.equal(result.rust_execution_count, 0, 'the rejected selected account performed no kernel execution')
+    assert.equal(calls, previousExecutions ? 1 : 0)
+    assert.equal(releases, previousExecutions ? 2 : 1)
+    assert.equal(scheduler.selectCalls, releases, 'a written rejection never retries another account')
+    assert.equal(attempts.items.at(-1).terminalState, 'policy_block')
+    assert.equal(attempts.items.at(-1).state, 'completed')
+    assert.equal(scheduler.successes.length, 0)
+    assert.equal(scheduler.cooldowns.length, previousExecutions ? 1 : 0)
+  })
+}
+
 test('account1 quota exhausted rotates to account2 and commits final sticky', async () => {
   const scheduler = new Scheduler([candidate(1), candidate(2)])
   const attempts = new Attempts()

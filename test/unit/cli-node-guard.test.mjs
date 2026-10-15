@@ -35,6 +35,8 @@ function slotFixture(t) {
   }
 }
 
+const linuxTest = process.platform === 'linux' ? test : test.skip
+
 const alive = (child) => {
   try {
     process.kill(child.pid, 0)
@@ -48,7 +50,7 @@ async function settle() {
   await new Promise((resolve) => setTimeout(resolve, 100))
 }
 
-test('keeps the kernel CLI, init bootstrap, setup-token and live panel CLIs including -p', async (t) => {
+linuxTest('keeps the kernel CLI, init bootstrap, setup-token and live panel CLIs including -p', async (t) => {
   const slot = slotFixture(t)
   const kernel = slot.add(['-p', '--output-format', 'stream-json'], ['CLAUDE_CODE_NATIVE_SLOTS=20'])
   const duplicate = slot.add(['-p', '--output-format', 'stream-json'], ['CLAUDE_CODE_NATIVE_SLOTS=20'])
@@ -64,7 +66,7 @@ test('keeps the kernel CLI, init bootstrap, setup-token and live panel CLIs incl
   for (const child of [hello, usage, setupToken, panelPrint, panelInteractive]) assert.equal(alive(child), true)
 })
 
-test('kills leaked CLIs from closed panel shells and unmarked -p runs', async (t) => {
+linuxTest('kills leaked CLIs from closed panel shells and unmarked -p runs', async (t) => {
   const slot = slotFixture(t)
   const kernel = slot.add(['-p'], ['CLAUDE_CODE_NATIVE_SLOTS=20'])
   const closedPanel = slot.add(['-p', 'hello'], ['KIN_PANEL_SHELL=gone'])
@@ -76,7 +78,7 @@ test('kills leaked CLIs from closed panel shells and unmarked -p runs', async (t
   assert.equal(alive(stray), false)
 })
 
-test('keeps a not-yet-synced kernel CLI that still has the prefixed slots env', async (t) => {
+linuxTest('keeps a not-yet-synced kernel CLI that still has the prefixed slots env', async (t) => {
   const slot = slotFixture(t)
   const kernel = slot.add(['-p'], ['CLAUDE_CODE_KIN_NATIVE_SLOTS=20'])
   const stray = slot.add(['-p', 'hello'], ['HOME=/home/kincli'])
@@ -86,7 +88,7 @@ test('keeps a not-yet-synced kernel CLI that still has the prefixed slots env', 
   assert.equal(alive(stray), false)
 })
 
-test('prefers the unprefixed kernel CLI over a leftover prefixed one', async (t) => {
+linuxTest('prefers the unprefixed kernel CLI over a leftover prefixed one', async (t) => {
   const slot = slotFixture(t)
   const oldKernel = slot.add(['-p'], ['CLAUDE_CODE_KIN_NATIVE_SLOTS=20'])
   const newKernel = slot.add(['-p'], ['CLAUDE_CODE_NATIVE_SLOTS=20'])
@@ -96,7 +98,7 @@ test('prefers the unprefixed kernel CLI over a leftover prefixed one', async (t)
   assert.equal(alive(newKernel), true)
 })
 
-test('leaves a CLI alone when its environ cannot be read', async (t) => {
+linuxTest('leaves a CLI alone when its environ cannot be read', async (t) => {
   const slot = slotFixture(t)
   const unknown = slot.add(['-p', 'hello'], null)
   slot.run([])

@@ -20,12 +20,14 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
+import { RAW_WARNING } from './raw-debug-panel'
 
 export type ExportScope = 'current' | 'all' | 'errors'
 export type ExportWindow = '' | '1h' | '6h' | '24h' | '7d'
 
 export type ExportOptions = {
   format: 'jsonl' | 'csv'
+  includeRaw?: boolean
   scope: ExportScope
   /** 仅 scope='errors' 时生效；空 = 全部错误类。 */
   errorClass: string
@@ -80,14 +82,16 @@ export function ExportDialog({
   onOpenChange,
   currentSummary,
   onExport,
+  isAdmin = false,
 }: {
   open: boolean
+  isAdmin?: boolean
   onOpenChange: (open: boolean) => void
   /** 「跟随当前筛选」的说明文案，由页面根据当前筛选态拼出。 */
   currentSummary: string
   onExport: (opts: ExportOptions) => Promise<void>
 }) {
-  const [format, setFormat] = useState<'jsonl' | 'csv'>('jsonl')
+  const [format, setFormat] = useState<'jsonl' | 'csv' | 'raw'>('jsonl')
   const [scope, setScope] = useState<ExportScope>('current')
   const [errorClass, setErrorClass] = useState('')
   const [window, setWindow] = useState<ExportWindow>('')
@@ -98,7 +102,15 @@ export function ExportDialog({
   async function handleConfirm() {
     setExporting(true)
     try {
-      await onExport({ format, scope, errorClass, window, includeMuted, limit })
+      await onExport({
+        format: format === 'raw' ? 'jsonl' : format,
+        includeRaw: isAdmin && format === 'raw',
+        scope,
+        errorClass,
+        window,
+        includeMuted,
+        limit,
+      })
       onOpenChange(false)
     } finally {
       setExporting(false)
@@ -219,7 +231,7 @@ export function ExportDialog({
             </div>
             <RadioGroup
               value={format}
-              onValueChange={(v) => setFormat(v as 'jsonl' | 'csv')}
+              onValueChange={(v) => setFormat(v as 'jsonl' | 'csv' | 'raw')}
               className='flex gap-4'
             >
               <Label className='flex cursor-pointer items-center gap-2 font-normal'>
@@ -230,7 +242,19 @@ export function ExportDialog({
                 <RadioGroupItem value='csv' />
                 <span className='text-sm'>CSV</span>
               </Label>
+              {isAdmin ? (
+                <Label className='flex cursor-pointer items-center gap-2 font-normal'>
+                  <RadioGroupItem value='raw' />
+                  <span className='text-sm'>原始 JSONL</span>
+                </Label>
+              ) : null}
             </RadioGroup>
+            {isAdmin && format === 'raw' ? (
+              <p className='text-xs text-muted-foreground'>
+                {RAW_WARNING} 导出最多 32 MiB
+                完整存储记录，过大/过期/未采集项会省略并报告；采集本身可能不完整。
+              </p>
+            ) : null}
           </div>
         </div>
         <DialogFooter>

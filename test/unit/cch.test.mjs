@@ -133,6 +133,6 @@ test('no inbound system still emits billing, identity, official prompt, and env'
   assert.match(out.system[0].text, /^x-anthropic-billing-header: /)
   assert.equal(out.system[1].text, "You are a Claude agent, built on Anthropic's Claude Agent SDK.")
   assert.equal(out.system[2].text, CRS_OFFICIAL_AGENT_PROMPT)
-  assert.deepEqual(out.system[2].cache_control, { type: 'ephemeral', ttl: '1h', scope: 'global' })
+  assert.deepEqual(out.system[2].cache_control, { type: 'ephemeral', scope: 'global' })
   assert.match(out.system[3].text, /^# Environment\n/)
 })

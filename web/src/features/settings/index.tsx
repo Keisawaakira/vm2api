@@ -6,7 +6,7 @@ import type { Dashboard } from '@/types/panel-overview'
 import type { NotifyConfig } from '@/types/panel-routing'
 import type { QuotaTierPolicy } from '@/types/panel-vm'
 import { toast } from 'sonner'
-import { api, patchVm } from '@/lib/api'
+import { api, isApiError, patchVm } from '@/lib/api'
 import {
   cacheBreakpointsFromCompat,
   cacheTtlFromCompat,
@@ -169,7 +169,17 @@ export function SettingsPage() {
           : []),
       ])
     },
-    onError: (error: Error) => toast.error(protocolFollowError(error.message)),
+    onError: async (error: Error) => {
+      toast.error(protocolFollowError(error.message))
+      // A partial runtime failure does not undo the server's persisted routing.
+      // Refresh its actual state; retry/restart remains an explicit operator action.
+      if (isApiError(error) && error.code === 'dataplane_sync_failed') {
+        await Promise.all([
+          qc.invalidateQueries({ queryKey: routingQueryOptions().queryKey }),
+          qc.invalidateQueries({ queryKey: dashboardQueryOptions().queryKey }),
+        ])
+      }
+    },
   })
   const sticky = (draft.sticky as Record<string, unknown> | undefined) || {}
   const pool = (draft.pool as Record<string, unknown> | undefined) || {}

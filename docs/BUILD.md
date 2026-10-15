@@ -1,6 +1,6 @@
 # 版本与构建
 
-git 里只有源码。`bin/`、`web/dist`、`share/crag` 与 `share/wrap-cli` 里的 ELF / glibc 都不进 git：
+上游的原版构建产物已移出 Git。`bin/`、`web/dist`、`share/crag` 与 `share/wrap-cli` 里的 ELF / glibc 不进 Git；本 fork 的已验证修复 CLI 仍独立保存在 `share/wrap-fixed`／`share/cc-fixed`，不能用原版 payload 代替：
 
 - `web/dist`、`kin-worker`、`kin-egress` 由源码编译（镜像构建内、CI 内或本机 `npm run build:*`）。
 - 闭源或预编译的槽位产物（`kin-kernel`、`kin-codex-kernel`、`kin-oauth-auth`、`cli-node`、`cc-node`、crag kernel、glibc 2.39 shim）放在独立的 payload Release，由 [`deploy/payload.json`](../deploy/payload.json) 按 sha256 / 大小钉住。`npm run fetch:payload` 下载并校验到 `bin/` / `share/`；镜像构建同样按清单下载，校验不过即失败。
@@ -24,7 +24,7 @@ gh release create payload-YYYY.MM.DD /tmp/payload/* --prerelease --latest=false 
 | git tag `v*` | 人打 | 触发 Release 工作流 |
 | Actions run 的 commit SHA | GitHub | 对照源码与构建；不再单独上传 `VERSION.txt` |
 
-`VERSION` 是唯一应用版本来源；`package.json` / lockfile 不再重复记录版本。发版当天改 `VERSION` 和 [CHANGELOG.md](../CHANGELOG.md)，再打 annotated tag。`Dockerfile` 把这两个文件拷进控制面镜像，面板才能读当前版本。一键脚本 `deploy/install.sh` 按 GitHub Release tag 升级，不改版本文件。
+`VERSION` 是唯一应用版本来源；`package.json` / lockfile 不再重复记录版本。发版当天改 `VERSION` 和 [CHANGELOG.md](../CHANGELOG.md)，再打 annotated tag。`Dockerfile` 把这两个文件拷进控制面镜像，面板才能读当前版本。本 fork 一键脚本 `deploy/install.sh` 默认跟随 fork 的 `main` 源码构建（也可 `--version` 指定 tag），不改版本文件；分支构建用 git/镜像 revision 区分，见 [DEPLOY.md](DEPLOY.md)。
 
 ## 打一个 Release
 
@@ -41,7 +41,7 @@ git push origin v1.2.22
 |---|---|
 | `kin-kernel` | Claude Code 槽内核（payload，推理必带） |
 | `kin-egress` | 远程 SOCKS5 透明网关 |
-| `kin-worker` | **只** `telemetry`，不是 hop |
+| `kin-worker` | telemetry 与槽内 OAuth/profile/usage/重置操作（源码构建）；不是 Claude 推理 hop |
 | `kin-codex-kernel` | Codex 槽（payload） |
 | `kin-oauth-auth` | OAuth / Setup Token 换票服务二进制；源码不随部署上传 |
 | `kin-kernel-crag` / `cli-node` / `cc-node` | crag kernel 与槽内 wrap CLI（payload） |
@@ -66,7 +66,7 @@ install -m 755 kin-kernel kin-egress kin-worker kin-codex-kernel kin-oauth-auth 
 
 然后按 [DEPLOY.md](DEPLOY.md) 指环境变量。槽进程不是 root：权限必须是 `755`，不要 `700`。
 
-控制面镜像：`docker compose -f docker-compose.yml -f docker-compose.build.yml build` 在镜像内编控制台与 Go helper 并下载 payload，构建机需要能访问 GitHub Release（见 [DEPLOY.md](DEPLOY.md#docker-compose)）。槽位 `kin-os/*` 首次启动编 ubuntu，或 `node docker/kin-os/build.mjs`；KVM 槽编 `kin-kvm-*`，或 `node docker/kin-kvm/build.mjs`。
+控制面镜像：`docker compose -f docker-compose.yml -f docker-compose.build.yml build` 在镜像内编合并后的控制台源码与 Go helper，并校验下载原版 payload；构建机需要能访问 GitHub Release（见 [DEPLOY.md](DEPLOY.md#docker-compose)）。本 fork 的两套已验证 fixed CLI 是独立的 `share/wrap-fixed`／`share/cc-fixed` 构建输入，不从原版 payload 替换。槽位 `kin-os/*` 首次启动编 ubuntu，或 `node docker/kin-os/build.mjs`；KVM 槽编 `kin-kvm-*`，或 `node docker/kin-kvm/build.mjs`。
 
 ## 本机构建
 

@@ -8,6 +8,15 @@ share/crag
 share/wrap-cli/*
 !share/wrap-cli/kin-kernel
 !share/wrap-cli/SAMPLE.json
+!share/wrap-fixed
+!share/wrap-fixed/**
+!share/cc-fixed
+!share/cc-fixed/**
+share/offline-candidates
+logs
+.pi-subagents
+CLIProxyAPI
+pi
 vms
 data
 .env
