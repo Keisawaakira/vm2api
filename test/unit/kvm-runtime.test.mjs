@@ -124,7 +124,9 @@ test('slot-guest-bin entries resolve inside the slot and follow host replacement
   for (const name of ['kin-worker', 'kin-kernel']) {
     const st = fs.lstatSync(path.join(stage, name))
     assert.equal(st.isSymbolicLink(), false, name)
-    assert.equal(st.mode & 0o777, 0o755, name)
+    // NTFS does not expose the POSIX execute bits. Linux retains the exact
+    // executable-permission check; content and replacement controls run on all hosts.
+    if (process.platform !== 'win32') assert.equal(st.mode & 0o777, 0o755, name)
   }
   assert.equal(fs.readFileSync(path.join(stage, 'kin-worker'), 'utf8'), 'worker-v1')
   const tmp = `${workerBin}.new`
@@ -302,7 +304,7 @@ test('docker computer mounts are read-only and use the persona MAC', () => {
   const args = computerDockerArgs({
     dir: '/data/vms/vm-02/kvm/fingerprint',
     mac: '3c:22:fb:f9:50:9d',
-    hostOf: (p) => p,
+    hostOf: (p) => p.replaceAll('\\', '/'),
   })
   assert.equal(args[args.indexOf('--mac-address') + 1], '3c:22:fb:f9:50:9d')
   assert.ok(args.includes('/data/vms/vm-02/kvm/fingerprint:/var/lib/kin-persona:ro'))

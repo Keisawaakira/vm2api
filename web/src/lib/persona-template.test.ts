@@ -6,6 +6,7 @@ import {
   PERSONA_PRESETS,
   PREVIEW_CALLER_AGENT,
   PREVIEW_CALLER_SYSTEM,
+  PERSONA_PRESET_OPTIONS,
   agentStandingVar,
   applyPersonaEnvVars,
   dropLegacyAutoScope,
@@ -23,6 +24,58 @@ import {
 } from './persona-template'
 
 describe('persona template contract', () => {
+  it('keeps the four routing presets in PUT order', () => {
+    expect([...PERSONA_PRESETS]).toEqual([
+      'official',
+      'official_full',
+      'zero',
+      'custom',
+    ])
+    expect(PERSONA_PRESET_OPTIONS.map(([value]) => value)).toEqual([
+      ...PERSONA_PRESETS,
+    ])
+  })
+
+  it('keeps official / official_full / zero slot ids and hide defaults', () => {
+    expect(DEFAULT_PERSONA_TEMPLATES.official.map((block) => block.id)).toEqual(
+      ['billing', 'identity', 'agent', 'env', 'caller_system']
+    )
+    expect(
+      DEFAULT_PERSONA_TEMPLATES.official_full.map((block) => block.id)
+    ).toEqual([
+      'billing',
+      'identity',
+      'agent_official',
+      'env_official',
+      'caller_system',
+    ])
+    expect(DEFAULT_PERSONA_TEMPLATES.official_full[2]?.text).toBe(
+      '{{agent_standing}}{{agent_official}}'
+    )
+    expect(DEFAULT_PERSONA_TEMPLATES.zero.map((block) => block.id)).toEqual([
+      'billing_zero',
+      'identity_slot',
+      'agent_slot',
+      'env',
+      'caller_system',
+    ])
+    expect(DEFAULT_PERSONA_TEMPLATES.official.some((block) => block.hide)).toBe(
+      false
+    )
+    expect(
+      DEFAULT_PERSONA_TEMPLATES.official_full.some((block) => block.hide)
+    ).toBe(false)
+    expect(
+      DEFAULT_PERSONA_TEMPLATES.zero.map((block) => block.hide === true)
+    ).toEqual([true, true, true, true, false])
+    expect(DEFAULT_PERSONA_TEMPLATES.zero[2]?.text).toBe('{{agent_standing}}')
+    expect(DEFAULT_PERSONA_TEMPLATES.zero[2]?.cache_control).toEqual({
+      type: 'ephemeral',
+    })
+    expect(DEFAULT_PERSONA_TEMPLATES.zero[2]?.note).toBeUndefined()
+    expect(DEFAULT_PERSONA_TEMPLATES.custom).toEqual([])
+  })
+
   it('forces overlay off only for zero, and empty custom seeds official', () => {
     expect(overlayDisabledByPersona('zero')).toBe(true)
     expect(overlayDisabledByPersona('official')).toBe(false)
@@ -149,7 +202,7 @@ describe('agent standing + system preview', () => {
     expect(blocks[1]).toMatchObject({
       text: 'Stay terse.\n',
       placeholder: false,
-      ttl: '1h',
+      ttl: '',
       hide: true,
     })
   })
@@ -234,7 +287,7 @@ describe('agent standing + system preview', () => {
     expect(fullOn[2]).toMatchObject({
       text: 'ENV',
       placeholder: false,
-      ttl: '1h',
+      ttl: '',
       scope: '',
     })
 

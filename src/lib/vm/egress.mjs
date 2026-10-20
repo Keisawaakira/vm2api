@@ -249,6 +249,12 @@ function processExe(pid) {
   return { path: deleted ? exe.slice(0, -' (deleted)'.length) : exe, deleted }
 }
 
+function isEgressExecutable(file) {
+  // Renamed old helpers remain drainable, but an argument containing the
+  // helper name is not process identity. Both executable and argv[0] must match.
+  return /^kin-egress(?:$|[-._])/.test(path.basename(String(file || '').replace(/ \(deleted\)$/, '')))
+}
+
 function ownsEgressProcess(pid, configPath, { allowDeleted = false } = {}) {
   if (!pidAlive(pid)) return false
   try {
@@ -257,15 +263,10 @@ function ownsEgressProcess(pid, configPath, { allowDeleted = false } = {}) {
     // A replaced binary keeps the old inode in this process. Reusing it leaves
     // the new file unrun and its listen port permanently busy.
     const exe = processExe(pid)
-    if (exe.deleted && !allowDeleted) return false
+    if ((exe.deleted && !allowDeleted) || !isEgressExecutable(exe.path)) return false
     const args = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0')
     const configIndex = args.indexOf('-config')
-    if (
-      !args.some((arg) => path.basename(String(arg || '').replace(/ \(deleted\)$/, '')).startsWith('kin-egress')) ||
-      configIndex <= 0 ||
-      !args[configIndex + 1]
-    )
-      return false
+    if (!isEgressExecutable(args[0]) || configIndex <= 0 || !args[configIndex + 1]) return false
     const argument = args[configIndex + 1]
     const actualConfig = path.isAbsolute(argument)
       ? path.resolve(argument)
@@ -283,8 +284,7 @@ function egressProcessPids() {
     if (!/^[1-9][0-9]*$/.test(name)) continue
     try {
       const args = fs.readFileSync(`/proc/${name}/cmdline`).toString('utf8').split('\0')
-      if (args.some((arg) => path.basename(arg.replace(/ \(deleted\)$/, '')).startsWith('kin-egress')))
-        pids.push(Number(name))
+      if (isEgressExecutable(args[0]) && isEgressExecutable(processExe(name).path)) pids.push(Number(name))
     } catch {
       // Raced with exit, or a process whose /proc we cannot read.
     }

@@ -22,6 +22,7 @@ test('classifier assembly retains caller fields across both outbound paths', () 
   for (const body of [
     prepareCliHopBody(input, { requestContext: context }),
     prepareOutboundAttempt({ canonicalBody: input, identity: {}, requestContext: context }).body,
+    prepareOutboundEnvelope({ canonicalBody: input, identity: {}, requestContext: context }).body,
   ]) {
     assert.deepEqual(body.thinking, input.thinking)
     assert.equal(body.temperature, 0)

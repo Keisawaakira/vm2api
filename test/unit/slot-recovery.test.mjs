@@ -138,7 +138,12 @@ test('Codex kernel: idle only when nothing listens and no child is tracked; othe
   assert.match((await kernelOf({ ok: false, status: 0, code: 'worker_timeout' })).message, /超时/)
 })
 
-test('Codex kernel probe codes come from the real socket: missing, stale and hung are told apart', async () => {
+test('Codex kernel probe codes come from the real socket: missing, stale and hung are told apart', {
+  skip:
+    process.platform === 'win32'
+      ? 'Requires filesystem Unix sockets; named pipes cannot model a stale socket file'
+      : false,
+}, async () => {
   const vm = { id: 'vm-gpt2', status: 'running', platform: 'openai', family: 'codex', proxy: SOCKS }
   const root = project([vm])
   const run = path.join(root, 'vms', vm.id, 'run')
@@ -563,7 +568,9 @@ test('bridge healer rebuilds dead node relays only over a ready link', async () 
   assert.deepEqual(healed, ['node-a/vm-n'])
 })
 
-test('a relay whose socket file vanished is dead until restarted', async () => {
+test('a relay whose socket file vanished is dead until restarted', {
+  skip: process.platform === 'win32' ? 'Requires filesystem Unix sockets; no WSL execution' : false,
+}, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-'))
   const relay = new SocketRelay({ socketPath: path.join(dir, 'k.sock'), remotePath: '/x', getClient: () => null })
   try {

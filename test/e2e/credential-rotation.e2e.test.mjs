@@ -203,6 +203,7 @@ async function fixture(t) {
 for (const throughRouter of [false, true]) {
   test(`OAuth rotation preserves a live stream through ${throughRouter ? 'the router' : 'the existing kernel/CLI binaries'}`, {
     timeout: 20000,
+    skip: process.platform !== 'linux' ? 'Requires actual shipped Linux kernel/CLI binaries' : false,
   }, async (t) => {
     const fx = await fixture(t)
     const call = throughRouter ? dispatchCallInference : callRustKernel

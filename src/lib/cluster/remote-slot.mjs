@@ -931,8 +931,9 @@ export async function refreshClusterSlotPayloads(
 }
 
 async function prepare(vm, projectRoot, routing) {
-  if (resolveKernelDataplane(vm, routing || {}) === 'crag') {
-    return { fail: { ok: false, code: 'remote_unsupported', error: 'crag 数据面暂不支持集群节点' } }
+  const dataplane = resolveKernelDataplane(vm, routing || {})
+  if (!isCodexVm(vm) && !['wrap', 'cc'].includes(dataplane)) {
+    return { fail: { ok: false, code: 'remote_unsupported', error: `${dataplane} 数据面暂不支持集群节点` } }
   }
   vm.kernel = vm.kernel && OS_CATALOG[vm.kernel] ? vm.kernel : 'ubuntu-24.04'
   vm.timezone = normalizeTimezone(vm.timezone)

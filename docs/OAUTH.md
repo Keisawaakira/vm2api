@@ -88,8 +88,8 @@ SSH 扩展槽同样由控制面经绑定出口换票。拿到授权后，提交�
 
 1. wipe 初装文件  
 2. 物化 `~/.claude/.credentials.json`（worker 活票）  
-3. 槽内 cli-node（`~/.kin/cli-node`，与 kernel 同一构建，不再另装官方 Claude Code）跑 `hello`；缺 cli-node 时报错，先 `wrap-cli/sync`  
-4. 槽内 CLI `/usage` 写 5h/7d/Fable 刻度，失败再试 2 次。账号等级只用成功且完整的官方 `/usage` 判定 Pro/Max
+3. 槽内原版 cli-node（`~/.kin/cli-node`，不再另装官方 Claude Code）跑 `hello`；缺 cli-node 时报错，先同步。fixed 的安装/同步也会铺好这个初装伴随文件，但 API kernel 仍选择 `cli-node-fixed`/`cc-node-fixed`。
+4. 本 fork 用槽内 `kin-worker oauth usage` 获取结构化官方额度，不用 CLI `/usage --print` 的订阅提示当额度。HTTP/worker 错误不能借旧字段通过；4xx 不连续重试，其余最多三次。账号等级仍只从成功且完整的额度数据识别；诊断、HTTP 状态与旧 CLI 文件保持分开。
 5. 后置播种（含强制 env：`DISABLE_TELEMETRY` 等按 seed_policy）  
 6. `~/.claude.json` 的 userID/machineID 写入槽位指纹；清 leftover `.claude/.claude.json`  
 7. `sync_telemetry`：写 `kin-identity.json` + `worker.json.telemetry`，reload 槽位拉 sidecar  
@@ -120,4 +120,4 @@ SSH 扩展槽同样由控制面经绑定出口换票。拿到授权后，提交�
 - `GET /api/panel/oauth`、`GET /admin/vm/oauth`：worker + 脱敏 credential 状态。
 - `GET/POST /api/panel/vms/:id/official-cc-bootstrap`：初装进度 / 手动再跑。
 
-Claude CLI 不参与推理或 token rotation；只在初装窗口启动一次。
+初装、常驻和终端属于独立 CLI 进程；API 推理由所选 kernel→CLI 数据面执行。已更新的原版 cli-node 和本 fork fixed 在宿主单写模式下只重读凭证，不自行刷新/写回；原版 cc-node 本体未因本 fork 补丁改变。

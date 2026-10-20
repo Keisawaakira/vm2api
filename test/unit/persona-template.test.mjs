@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { OFFICIAL_CLI_VERSION } from '../../src/lib/identity/vm-identity.mjs'
 
 import {
   DEFAULT_OVERLAY_TEMPLATES,
@@ -116,7 +117,7 @@ test('official_full preset renders the complete agent prompt separately', () => 
   assert.deepEqual(out[2].cache_control, { type: 'ephemeral', ttl: '1h' })
   assert.equal(typeof out[3].text, 'string')
   assert.match(out[3].text, /# Environment|# Text output/)
-  assert.deepEqual(out[3].cache_control, { type: 'ephemeral', ttl: '1h' })
+  assert.deepEqual(out[3].cache_control, { type: 'ephemeral' })
 })
 
 test('agent standing preset flags default off and isolate per preset', () => {
@@ -133,6 +134,22 @@ test('agent standing preset flags default off and isolate per preset', () => {
   assert.equal(agentStandingVar({ agent_standing_presets: { official: true } }, 'zero'), '')
   assert.equal(agentStandingVar({ agent_standing_presets: { zero: false } }, 'zero'), '')
   assert.equal(agentStandingVar({ agent_standing: '', agent_standing_presets: { official: true } }, 'official'), '')
+})
+
+test('zero preset billing line is byte-identical to buildZeroBillingText', () => {
+  const env = { timezone: 'Asia/Tokyo' }
+  const vars = personaTemplateVars({
+    firstUserText: 'ping',
+    sessionId: 's-2',
+    env,
+    agentStanding: agentStandingVar({ agent_standing_presets: { zero: true } }, 'zero'),
+  })
+  const out = renderPersonaTemplate(DEFAULT_PERSONA_TEMPLATES.zero, vars)
+  assert.equal(out.length, 3)
+  assert.equal(out[0].text, buildZeroBillingText('ping', OFFICIAL_CLI_VERSION, 's-2'))
+  assert.equal(out[1].text, CRS_EMPTY_IDENTITY_TEXT)
+  assert.equal(out[2].text, `${DEFAULT_AGENT_STANDING}\n`)
+  assert.deepEqual(out[2].cache_control, { type: 'ephemeral' })
 })
 
 test('zero prompt_version uses the compact Anthropic Claude identity', () => {
@@ -436,6 +453,7 @@ test('PUT routing accepts official_full and empty follow-preset templates', () =
 })
 
 test('PUT routing accepts only 5m and 1h cache TTL values', () => {
+  assert.deepEqual(validatePersonaRoutingPatch({ compatibility: { cache_ttl: 'auto' } }), [])
   assert.deepEqual(validatePersonaRoutingPatch({ compatibility: { cache_ttl: '5m' } }), [])
   assert.deepEqual(validatePersonaRoutingPatch({ compatibility: { cache_ttl: '1h' } }), [])
   assert.match(validatePersonaRoutingPatch({ compatibility: { cache_ttl: '60m' } })[0], /5m \/ 1h/)

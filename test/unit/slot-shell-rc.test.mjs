@@ -11,8 +11,12 @@ import {
   readWorkerCredentialFile,
   writeWorkerCredentialFile,
 } from '../../src/lib/oauth/oauth-credentials.mjs'
-test('claude in the panel shell runs cli-node and points config at .claude', () => {
+
+test('claude in the panel shell runs cli-node and points config at .claude', {
+  skip: process.platform === 'win32' ? 'Requires POSIX bash/symlink semantics; must not start WSL on Windows' : false,
+}, (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slot-shell-rc-'))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
   const bin = path.join(dir, 'cli-node')
   const decoyDir = path.join(dir, 'decoy')
   const home = path.join(dir, 'home')
@@ -49,10 +53,23 @@ test('claude in the panel shell runs cli-node and points config at .claude', () 
   assert.doesNotMatch(ran.stdout, /DECOY/)
   assert.equal(fs.readlinkSync(path.join(home, '.claude', '.credentials.json')), 'credentials.json')
   assert.equal(fs.readlinkSync(path.join(home, '.claude.json')), '.claude/.claude.json')
-  fs.rmSync(dir, { recursive: true, force: true })
 })
 
-test('official login runs only when the panel login marker is set', () => {
+test('panel shell keeps configuration local to the session and quotes the selected original CLI', () => {
+  const { rc, cmd } = panelShellLaunch("/fixture/cli'node")
+  assert.match(rc, /CLAUDE_CONFIG_DIR.*HOME\/\.claude/)
+  assert.match(rc, /unalias claude/)
+  assert.ok(rc.includes("'/fixture/cli'\\''node'"))
+  assert.match(rc, /\.credentials\.json/)
+  assert.equal(cmd[0], '/bin/sh')
+  assert.match(cmd[2], /bash --rcfile/)
+  assert.match(cmd[2], /ENV=\$rc exec sh -i/)
+  assert.doesNotMatch(rc, /--native-messages|cc-node-fixed|cli-node-fixed/)
+})
+
+test('official login runs only when the panel login marker is set', {
+  skip: process.platform === 'win32' ? 'Requires POSIX executable CLI fixture; do not start WSL' : false,
+}, () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slot-shell-login-'))
   const bin = path.join(dir, 'cli-node')
   fs.writeFileSync(bin, '#!/bin/sh\necho "cli-node $*"\n', { mode: 0o755 })
@@ -202,7 +219,9 @@ function writeLaunchRc(dir) {
   return rcPath
 }
 
-test('panel shell prints live 系统特征 before the prompt', () => {
+test('panel shell prints live 系统特征 before the prompt', {
+  skip: process.platform === 'win32' ? 'Requires POSIX bash/guest filesystem semantics; no WSL execution' : false,
+}, () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slot-shell-facts-'))
   const home = path.join(dir, 'home')
   fs.mkdirSync(home)
@@ -247,7 +266,10 @@ test('panel shell prints live 系统特征 before the prompt', () => {
   fs.rmSync(dir, { recursive: true, force: true })
 })
 
-test('panel shell 系统特征 still prints under sh -i fallback', () => {
+test('panel shell 系统特征 still prints under sh -i fallback', {
+  skip:
+    process.platform === 'win32' ? 'Requires POSIX interactive sh/guest filesystem semantics; no WSL execution' : false,
+}, () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slot-shell-facts-sh-'))
   const home = path.join(dir, 'home')
   fs.mkdirSync(home)

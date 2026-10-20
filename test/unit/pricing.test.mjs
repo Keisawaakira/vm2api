@@ -35,6 +35,7 @@ test('Haiku 5.5 bills base rates under 100K and the premium band above', () => {
       output_tokens: 1_000_000,
       cache_read_tokens: 0,
       cache_creation_tokens: 50_000,
+      cache_creation_1h_tokens: 50_000,
       cache_ttl: '1h',
     },
     'claude-haiku-5-5',
@@ -49,6 +50,7 @@ test('Haiku 5.5 bills base rates under 100K and the premium band above', () => {
       output_tokens: 1_000_000,
       cache_read_tokens: 1_000_000,
       cache_creation_tokens: 1_000_000,
+      cache_creation_5m_tokens: 1_000_000,
       cache_ttl: '5m',
     },
     'claude-haiku-5-5',
@@ -131,7 +133,7 @@ test('Fable 5.1 and Mythos 5.1 cache read is $0.25 per MTok', () => {
   assert.equal(mythos.cache_read_cost, 0.25)
 })
 
-test('cache creation marked cache_ttl=1h bills the 1h list price', () => {
+test('requested 1h cannot classify an unreported cache split', () => {
   const c = calculateCost(
     {
       input_tokens: 0,
@@ -141,12 +143,14 @@ test('cache creation marked cache_ttl=1h bills the 1h list price', () => {
     },
     'claude-sonnet-5',
   )
-  assert.equal(c.cache_creation_1h_tokens, 1_000_000)
-  assert.equal(c.cache_creation_5m_tokens, 0)
-  assert.equal(c.cache_creation_cost, 4)
+  assert.equal(c.cache_creation_1h_tokens, null)
+  assert.equal(c.cache_creation_5m_tokens, null)
+  assert.equal(c.cache_creation_unclassified_tokens, 1_000_000)
+  assert.equal(c.cache_creation_estimated, true)
+  assert.equal(c.cache_creation_cost, 2.5)
 })
 
-test('cache creation without TTL breakdown bills as 5m', () => {
+test('cache creation without split uses a labeled conservative estimate', () => {
   const c = calculateCost(
     {
       input_tokens: 0,
@@ -155,8 +159,10 @@ test('cache creation without TTL breakdown bills as 5m', () => {
     },
     'claude-sonnet-5',
   )
-  assert.equal(c.cache_creation_5m_tokens, 1_000_000)
-  assert.equal(c.cache_creation_1h_tokens, 0)
+  assert.equal(c.cache_creation_5m_tokens, null)
+  assert.equal(c.cache_creation_1h_tokens, null)
+  assert.equal(c.cache_creation_unclassified_tokens, 1_000_000)
+  assert.equal(c.cache_creation_estimated, true)
   assert.equal(c.cache_creation_cost, 2.5)
   assert.equal(c.total_cost, 2.5)
 })

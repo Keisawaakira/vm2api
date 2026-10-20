@@ -23,6 +23,7 @@ function makePool(t, opts = {}) {
   pool.stopScheduler()
   t.after(() => {
     pool.stopScheduler()
+    pool.db.close()
     fs.rmSync(dir, { recursive: true, force: true })
   })
   return pool

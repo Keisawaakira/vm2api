@@ -387,7 +387,7 @@ test('global engine PUT restores routing when persistence fails', async () => {
 })
 
 test('OpenAI scheduling HTTP saves preserve platform isolation, pins and atomic validation', async () => {
-  const gw = await startGateway()
+  const gw = await startGateway({ computerStub: true })
   const rows = async () => (await api(gw, 'GET', '/api/panel/vms')).json.data.items
   try {
     const claudeBefore = (await rows()).find((vm) => vm.id === 'vm-sim-01')
@@ -436,7 +436,7 @@ test('OpenAI scheduling HTTP saves preserve platform isolation, pins and atomic 
 })
 
 test('OpenAI scheduling HTTP panel status uses live OpenAI gates, not Claude thresholds', async () => {
-  const gw = await startGateway()
+  const gw = await startGateway({ computerStub: true })
   const id = 'vm-openai-status'
   try {
     const create = await api(gw, 'POST', '/api/panel/vms/create', {

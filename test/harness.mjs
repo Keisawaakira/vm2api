@@ -7,7 +7,7 @@ import fs from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -105,7 +105,14 @@ export async function startGateway(opts = {}) {
   }
   if (opts.env) Object.assign(env, opts.env)
 
-  const child = spawn(process.execPath, [path.join(GATEWAY_ROOT, 'server.mjs')], {
+  const args = opts.computerStub
+    ? [
+        '--import',
+        pathToFileURL(path.join(__dirname, 'fixtures', 'kin-computer-preload.mjs')).href,
+        path.join(GATEWAY_ROOT, 'server.mjs'),
+      ]
+    : [path.join(GATEWAY_ROOT, 'server.mjs')]
+  const child = spawn(process.execPath, args, {
     env,
     cwd: GATEWAY_ROOT,
     stdio: ['ignore', 'pipe', 'pipe'],

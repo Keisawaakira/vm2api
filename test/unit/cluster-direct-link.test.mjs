@@ -181,7 +181,9 @@ test('gate container: root keeps only DAC_OVERRIDE, only tls/ is writable, spec 
   assert.notEqual(gateContainer({ host: root, imageRef: 'i', body: 'other', binaryDigest: 'd' }).digest, a.digest)
 })
 
-test('SocketRelay: direct dial, SSH fallback on null, local drop when the slot socket is missing', async (t) => {
+test('SocketRelay: direct dial, SSH fallback on null, local drop when the slot socket is missing', {
+  skip: process.platform === 'win32' ? 'Requires filesystem Unix sockets; TLS controls still run' : false,
+}, async (t) => {
   const gate = await fakeGate(t)
   const dir = shortDir(t)
   const sshAsked = []

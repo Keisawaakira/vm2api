@@ -1,6 +1,44 @@
 # 部署
 
-推荐 **Docker Compose**，**拉预构建镜像**，不在你的机器上构建。安装目录任意（下文用 `/opt/vm2api`）。
+本 fork 推荐 **Docker Compose 源码构建**。安装脚本默认源仍为 `Keisawaakira/vm2api` 的 `main`；本轮修复交付在 `test`，要保留 fixed／CPA／取证修改请显式使用 `--ref test`（并确认该提交已推送）。安装目录任意（下文用 `/opt/vm2api`）。上游 GHCR 镜像不包含本 fork 的 Chat → Messages 修复。
+
+## Fork / WSL 更新（本次修复）
+
+先把本地改动提交并推送到 `https://github.com/Keisawaakira/vm2api.git` 的 `main`。Windows 工作区的文件不会自动进入 WSL 的安装目录或已运行的容器。在运行 Docker 的 WSL 终端执行：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Keisawaakira/vm2api/main/deploy/install.sh -o /tmp/vm2api-install.sh
+sudo bash /tmp/vm2api-install.sh upgrade --dir /opt/vm2api
+# 全新安装把 upgrade 换成 install
+```
+
+脚本默认源码模式，不依赖 fork 发布 Release/镜像。它拉取 `main` 的实际提交，用两个 compose 文件构建本地 `vm2api-fork:local` 并启动，随后同步槽内 CLI/kernel。已有镜像安装会暂存源码后迁移，保留 `.env`、`data/`、`vms/` 和已有 `src/config`；已有 git 安装会把 origin 对齐 fork。**源码存在未提交修改时会拒绝覆盖**，请先检查并提交或备份处理，勿直接 `git reset --hard`。保留下来的自定义 tracked config 也会触发此保护。
+
+- `--ref 分支名`：拉取指定分支/tag；以后更新同一分支仍需传此参数（也可传环境变量 `VM2API_REF`）。
+- `--version vX.Y.Z`：固定 tag，优先于 `--ref`；旧 tag 不含新修复。
+- `--no-start`：仅更新磁盘源码，不构建/重启；不能视为修复已上线。
+- `--image`：显式选择该仓库的已发布 GHCR 镜像；fork 未发布镜像时不要使用。
+- 构建/探活失败会返回非零，不能把“源码已更新”当成运行容器已更新。
+
+验证磁盘提交与运行容器构建提交：
+
+```bash
+git -C /opt/vm2api rev-parse HEAD
+docker inspect vm2api --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}'
+docker inspect vm2api --format '{{.Config.Image}}'
+# 上面应是相同提交，以及 vm2api-fork:local（或显式配置的 VM2API_BUILD_IMAGE）。
+curl -fsS --noproxy '*' http://127.0.0.1:8787/health
+```
+
+手动重建也必须带覆盖层（只执行 `docker compose up -d --build` 仍可能用上游镜像）：
+
+```bash
+cd /opt/vm2api
+VM2API_SOURCE_REVISION=$(git rev-parse HEAD) \
+  docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```
+
+当前管理台的 Release 检查/更新器仍是上游的按 tag 更新机制，**fork 分支更新请使用以上 WSL 脚本，不要点管理台更新或使用它复制的上游命令**。下文保留的上游镜像及历史版本命令不包含本 fork 未发布的修改。
 
 ## 机器
 
@@ -36,7 +74,7 @@ KVM 槽需要宿主 `/dev/kvm` 可读写（控制面在容器内时，用一次 
 
 挂 `docker.sock`，`network_mode: host`。安装目录不再限定 `/opt/vm2api`：控制面自省 `docker inspect vm2api` 的 Mounts，把槽的 `-v` 源换算成宿主路径；也可用 `VM2API_HOST_ROOT` 显式指定。
 
-## 安装
+## 上游镜像安装（不含 fork 修复）
 
 **一键（推荐）：**
 
@@ -90,9 +128,9 @@ cd /opt/vm2api && cp .env.example .env && chmod 600 .env
 docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ```
 
-一键脚本对应 `--from-source`；目录里有 `.git` 时 `upgrade` 自动走源码分支。仓库只有源码：镜像构建内编控制台与 Go helper，并按 `deploy/payload.json` 从 payload Release 下载、校验 kernel / CLI / kin-computer，构建机要能访问 GitHub。镜像入口再把它们写进挂载的 `bin/` 与 `share/`。
+本 fork 一键脚本默认 `--from-source`，目录里有 `.git` 时始终走源码分支；请使用文首 fork 命令而非以上上游示例。镜像构建内编合并后的控制台和 Go helper，并按 `deploy/payload.json` 从 payload Release 下载、校验原版 kernel／CLI／kin-computer，构建机要能访问 GitHub。两份 fixed CLI 仍从本 fork 的独立目录打包，不能被原版 payload 覆盖。镜像入口把文件写入挂载的 `bin/` 与 `share/`，可执行权限保持 **755**。
 
-2026-10-11 起仓库历史已重写以移除构建产物，所有 tag 的提交号都变了。旧的源码安装用新版 `deploy/install.sh upgrade`（脚本已改为 `git fetch --force --tags`），不要用旧面板的一键更新做这次迁移。
+2026-10-11 上游重写历史移除了原版二进制和 `web/dist`；本轮已按等价源码基点重放 fork 修复。旧源码安装需使用更新后的 fork 安装脚本（保留未提交修改保护，并接受重写的 tag），不要用旧版上游面板更新命令覆盖本 fork。构建需要访问 GitHub Release 和相应依赖源。
 
 升级到 **v1.2.22** 见下面「已部署机升级到 1.2.22」。更新控制面和槽内 kernel，但不要 `docker rm` 槽。
 
@@ -103,6 +141,8 @@ docker exec vm2api python3 -c 'import urllib.request; print(urllib.request.urlop
 ```
 
 槽位安装、同步和模板制作优先使用 `KIN_KERNEL_BIN` / `bin/kin-kernel`；母样本或槽内快照只在主内核不可用时使用。更新或上传主内核后，仍需同步并重启目标槽。控制面重启本身不会替换正在运行的槽内进程。
+
+2026-10-18 合入 main1.3.191 后，两个固定 CLI 更新为 v1191-r1，共享 Claude kernel、原版 CLI 和 Codex kernel 随 payload-2026.10.18-openai-ws-190 更新，并新增 kin-computer。部署完整 fork 后，暂停目标槽业务，明确应用原来的 `cc-fixed`/`wrap-fixed` 并重启 kernel/CLI；不要仅更新 Node，也不要用原版 CLI 覆盖 fixed。普通“不重启同步”现在只检查，明确“应用数据面”才铺文件、写配置；选择不重启时会标记待重启，不能把检查成功当作运行已换版。caller system、缓存位置及显式/缺失 TTL、CC 启动/session、取证和取消修复保留。worker/egress/API kernel 和前端由 Docker 编译源码；本地源码、Bun 小宿主与分发检查不等于完整 Docker/Linux/KVM/云端验收。
 
 ## 防火墙（UFW / firewalld）
 
@@ -206,7 +246,7 @@ location / {
 
 ## 一键安装 / 更新
 
-`deploy/install.sh` 默认拉 ghcr 预构建镜像，不在目标机编译，只下载 `docker-compose.yml`、`.env.example`、`VERSION`、`CHANGELOG.md`、`deploy/install.sh`（ARM64 另加 `deploy/prepare-arm64.py`）。`--from-source` 在目标机按 `Dockerfile` 多阶段构建：编 `web/dist` 与 Go helper，按 `deploy/payload.json` 下载 payload。不碰已有非空 `.env` 字段、`vms/`、`data/`，不 `docker rm` 槽。
+本 fork 的 `deploy/install.sh` 仍默认拉取 fork 分支并通过 `docker-compose.build.yml` 重建控制面，详见文首。`web/dist` 现在由镜像内 `pnpm build` 从合并源码生成，不再提交到 Git；不能复制旧的原版控制台配 fork 后端。Go helper 从源码构建，原版闭源 payload 按清单校验，fixed CLI 独立保留。不碰已有非空 `.env` 字段、`vms/`、`data/`，不 `docker rm` 槽。以下上游 Release 安装记录仅供历史排障，不要用上游更新命令覆盖本 fork。
 
 ### 两类安装错误
 
@@ -240,7 +280,7 @@ sudo bash /opt/vm2api/deploy/install.sh upgrade --version v1.2.22
 sudo bash /opt/vm2api/deploy/install.sh check
 ```
 
-面板：`GET /api/panel/version`、`GET /api/panel/changelog`、`POST /api/panel/update`。确认更新后，控制面会通过已挂载的 `docker.sock` 自省当前 Compose 项目和全部配置文件，拉起独立升级助手。助手记录更新前正常运行的槽位，按源码/镜像模式更新，保留已有 `src/config` 配置并 `--force-recreate` 控制面；通过健康检查、版本接口和槽位详情接口确认后端版本正确、此前健康的槽内内核仍能通过控制面鉴权，完成后才报告成功。忙碌但进程健康的槽位不视为故障；更新前已故障或停止的槽位不计入本次回归检查。助手失败时保留 `docker logs vm2api-upgrade-<project>`；容器里没有可识别的 Compose 服务时返回 `409 host_upgrade_required`，响应里带同一条 curl 命令。槽位内核健康检查不调用模型，不消耗上游额度。
+面板：`GET /api/panel/version`、`GET /api/panel/changelog`、`POST /api/panel/update`。**本 fork 检测到 fixed registry 时，拒绝按上游版本 tag 自动覆盖，返回 `409 host_upgrade_required` 和显式 `test` 分支升级命令，且不启动 Docker 更新助手；版本检查仍显示上游更新。** 请使用该 fork 命令或正常的已审核源分支部署流程。上游普通安装（不含 fixed registry）的更新行为如下：确认更新后，控制面会通过已挂载的 `docker.sock` 自省当前 Compose 项目和全部配置文件，拉起独立升级助手。助手记录更新前正常运行的槽位，按源码/镜像模式更新，保留已有 `src/config` 配置并 `--force-recreate` 控制面；通过健康检查、版本接口和槽位详情接口确认后端版本正确、此前健康的槽内内核仍能通过控制面鉴权，完成后才报告成功。忙碌但进程健康的槽位不视为故障；更新前已故障或停止的槽位不计入本次回归检查。助手失败时保留 `docker logs vm2api-upgrade-<project>`；容器里没有可识别的 Compose 服务时返回 `409 host_upgrade_required`，响应里带同一条 curl 命令。槽位内核健康检查不调用模型，不消耗上游额度。
 
 ## 已部署机升级到 1.2.22
 

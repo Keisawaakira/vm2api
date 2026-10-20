@@ -200,6 +200,7 @@ test('vm detail exposes Go credential ownership and Rust kernel health', async (
   assert.deepEqual(detail.data.kernel, {
     telemetry: { enabled: null, running: null },
     process_topology: null,
+    cc_native_trace: { configured: false, enabled: false, raw_enabled: false, state: 'disabled', processes: [] },
     credential_owner: 'go',
     configured_engine: 'rust',
     resolved_engine: 'rust',
@@ -326,7 +327,12 @@ test('local proxy node labels are present for admin and absent for tenant', asyn
   const project = tmpDir()
   const dataDir = path.join(project, 'data')
   fs.mkdirSync(dataDir, { recursive: true })
-  t.after(() => fs.rmSync(project, { recursive: true, force: true }))
+  let pool
+  t.after(() => {
+    pool?.stopScheduler()
+    pool?.db.close()
+    fs.rmSync(project, { recursive: true, force: true })
+  })
 
   writeVm(project, {
     id: 'vm-ctrl',
@@ -358,11 +364,10 @@ test('local proxy node labels are present for admin and absent for tenant', asyn
     { id: 'vm-tokyo', node_id: 'node-a' },
     { id: 'vm-tenant', node_id: 'node-a', owner_user_id: 'user-1' },
   ]
-  const pool = new ProxyPool({
+  pool = new ProxyPool({
     dataDir,
     vmNodeOf: (vmId) => vms.find((vm) => vm.id === vmId)?.node_id || null,
   })
-  t.after(() => pool.stopScheduler())
   pool.ensureLocal()
   // A generic px-local bind lands each slot on its own VPS's local row.
   assert.equal(pool.bind('px-local', 'vm-ctrl').proxy.id, 'px-local')

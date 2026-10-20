@@ -230,6 +230,61 @@ test('rust switch fails before touching the VM when the binary is missing', asyn
   assert.equal(touched, false)
 })
 
+for (const failedHealth of [false, true]) {
+  test(`fixed engine switch waits for asynchronous reload and rollback (failed health=${failedHealth})`, async () => {
+    const calls = []
+    const routing = { compatibility: { cch_enabled: false, auto_compact_window: 250000 } }
+    const waiting = []
+    let settled = false
+    const promise = switchSlotInferenceEngine({ id: 'vm-async-fixed' }, '/fixture-only', 'rust', {
+      routing,
+      ops: {
+        kernelBinPath: () => '',
+        materializeSlotDataplane: () => ({ ok: true, wrapper: true, kernel_bin: true }),
+        writeKernelConfig: (_root, _vm, opts) => {
+          assert.equal(opts.routing, routing)
+          calls.push('config')
+        },
+        inspectContainer: () => ({ running: true }),
+        containerHasKernelMount: () => false,
+        reloadSlotWorker: (_vm, _root, opts) => {
+          assert.equal(opts.routing, routing)
+          calls.push('reload')
+          return new Promise((resolve) => waiting.push(resolve))
+        },
+        restartRustKernel: async () => {
+          calls.push('kernel')
+          return failedHealth
+            ? { ok: false, reason: 'health_timeout', health: { status: 503 } }
+            : { ok: true, health: { status: 200 } }
+        },
+      },
+    }).then((result) => {
+      settled = true
+      return result
+    })
+    assert.deepEqual(calls, ['config', 'reload'])
+    assert.equal(settled, false)
+    waiting.shift()({ ok: true, action: 'reloaded' })
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(calls[2], 'kernel')
+    if (failedHealth) {
+      assert.equal(settled, false, 'failure must await the asynchronous rollback too')
+      assert.deepEqual(calls, ['config', 'reload', 'kernel', 'reload'])
+      waiting.shift()({ ok: true, action: 'rolled_back' })
+    }
+    const result = await promise
+    assert.equal(result.ok, !failedHealth)
+    if (failedHealth) {
+      assert.equal(result.code, 'kernel_health_timeout')
+      assert.deepEqual(result.rollback, { ok: true, action: 'rolled_back' })
+    } else {
+      assert.equal(result.action, 'reloaded')
+      assert.equal(result.runtime.rust.reachable, true)
+    }
+  })
+}
+
 test('global engine switch loads raw VMs and skips explicit overrides', async (t) => {
   const projectRoot = seedVmRecords([
     { id: 'vm-inherited', proxy: { host: '127.0.0.1', port: 1080, password: 'secret' } },

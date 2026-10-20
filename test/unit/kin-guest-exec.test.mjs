@@ -6,6 +6,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 const SOURCE = path.resolve(import.meta.dirname, '../../docker/kin-kvm/kin-guest-exec')
+const posixOnly = {
+  skip: process.platform === 'win32' ? 'Requires POSIX executable/PATH semantics; no WSL execution' : false,
+}
 
 function prepareHarness() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-guest-exec-'))
@@ -67,7 +70,7 @@ function remoteScript(h) {
   return fs.existsSync(h.remoteLog) ? fs.readFileSync(h.remoteLog, 'utf8') : ''
 }
 
-test('interactive foreground ssh is not wrapped in timeout', () => {
+test('interactive foreground ssh is not wrapped in timeout', posixOnly, () => {
   const h = prepareHarness()
   const ran = runHarness(h, ['-i', '-t', '-u', '1000:1000', '--', '/bin/true'])
   assert.equal(ran.status, 0, ran.stderr)
@@ -76,7 +79,7 @@ test('interactive foreground ssh is not wrapped in timeout', () => {
   fs.rmSync(h.root, { recursive: true, force: true })
 })
 
-test('non-interactive path still uses timeout 8', () => {
+test('non-interactive path still uses timeout 8', posixOnly, () => {
   const h = prepareHarness()
   const ran = runHarness(h, ['-u', '1000:1000', '--', '/bin/true'])
   assert.equal(ran.status, 0, ran.stderr)
@@ -84,7 +87,7 @@ test('non-interactive path still uses timeout 8', () => {
   fs.rmSync(h.root, { recursive: true, force: true })
 })
 
-test('detach path still uses timeout 8', () => {
+test('detach path still uses timeout 8', posixOnly, () => {
   const h = prepareHarness()
   const ran = runHarness(h, ['-d', '-u', '0', '--', '/bin/sh', '-c', 'true'])
   assert.equal(ran.status, 0, ran.stderr)
@@ -92,7 +95,7 @@ test('detach path still uses timeout 8', () => {
   fs.rmSync(h.root, { recursive: true, force: true })
 })
 
-test('-e preserves embedded newlines in remote export script', () => {
+test('-e preserves embedded newlines in remote export script', posixOnly, () => {
   const h = prepareHarness()
   const val = 'line1\nline2'
   const ran = runHarness(h, ['-e', `PROBE=${val}`, '-u', '1000:1000', '--', '/bin/sh', '-c', 'true'])
@@ -104,7 +107,7 @@ test('-e preserves embedded newlines in remote export script', () => {
   fs.rmSync(h.root, { recursive: true, force: true })
 })
 
-test('multiline KIN_PANEL_RC-style env survives quoting', () => {
+test('multiline KIN_PANEL_RC-style env survives quoting', posixOnly, () => {
   const h = prepareHarness()
   const rc = 'if true; then\necho ok\nfi'
   const ran = runHarness(h, ['-e', `KIN_PANEL_RC=${rc}`, '-i', '-t', '--', '/bin/sh', '-c', 'true'])

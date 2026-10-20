@@ -486,8 +486,11 @@ function gatedQuota(root) {
 
 function gatedSetup(t, specs) {
   const root = project(specs)
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   const quota = gatedQuota(root)
+  t.after(() => {
+    quota.db.close()
+    fs.rmSync(root, { recursive: true, force: true })
+  })
   const pool = new PoolScheduler({
     projectRoot: root,
     runtimeRepo: new RuntimeRepo(),

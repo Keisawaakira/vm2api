@@ -30,6 +30,7 @@ import {
   totalTokens,
 } from './usage-log-preds.mjs'
 import { collapseBlockKeywords, foldInterceptRows } from '../../protocol/intercept-stats.mjs'
+import { cacheCreationUsage } from '../../protocol/cache-usage.mjs'
 
 /** settings key: ISO instant before which usage_logs rows may have been pruned. Monotonic. */
 const PRUNED_THROUGH_KEY = 'usage_logs_pruned_through'
@@ -130,6 +131,7 @@ function toRow(rec) {
     if (c === 'ip_address') return rec.ip_address ?? rec.ip ?? null
     if (c === 'stream') return rec.stream ? 1 : 0
     if (c === 'has_tools') return rec.has_tools == null ? null : rec.has_tools ? 1 : 0
+    if ((c === 'cache_creation_5m_tokens' || c === 'cache_creation_1h_tokens') && rec[c] == null) return null
     if (
       c === 'input_tokens' ||
       c === 'output_tokens' ||
@@ -148,6 +150,7 @@ function fromRow(row) {
   if (!row) return null
   return {
     ...row,
+    ...cacheCreationUsage(row),
     ts: row.created_at,
     ip: row.ip_address,
     stream: !!row.stream,
@@ -296,13 +299,19 @@ export class UsageLogsRepo {
     this._insertDebug = db.prepare(`
       INSERT INTO request_log_debug (request_id, ts, record_json) VALUES (?, ?, ?)
       ON CONFLICT(request_id) DO UPDATE SET ts = excluded.ts, record_json = excluded.record_json
+      WHERE json_type(request_log_debug.record_json, '$.raw_debug') IS NULL
     `)
     this._insertDebugIfAbsent = db.prepare(`
       INSERT OR IGNORE INTO request_log_debug (request_id, ts, record_json) VALUES (?, ?, ?)
     `)
-    this._getDebug = db.prepare('SELECT record_json FROM request_log_debug WHERE request_id = ?')
     this._vmOwner = db.prepare('SELECT owner_user_id FROM vms WHERE id = ?')
-    this._listDebug = db.prepare('SELECT record_json FROM request_log_debug ORDER BY ts DESC LIMIT ?')
+    this._getRawDebug = db.prepare('SELECT record_json FROM request_log_debug WHERE request_id = ?')
+    this._getDebug = db.prepare(
+      "SELECT json_remove(record_json, '$.raw_debug') AS record_json FROM request_log_debug WHERE request_id = ?",
+    )
+    this._listDebug = db.prepare(
+      "SELECT json_remove(record_json, '$.raw_debug') AS record_json FROM request_log_debug ORDER BY ts DESC LIMIT ?",
+    )
     this._getByRequestId = db.prepare('SELECT * FROM usage_logs WHERE request_id = ?')
     // OCTET_LENGTH counts encoded bytes and lets SQLite read TEXT size from metadata without loading each body.
     this._debugBytes = db.prepare('SELECT COALESCE(SUM(OCTET_LENGTH(record_json)), 0) AS n FROM request_log_debug')
@@ -365,14 +374,45 @@ export class UsageLogsRepo {
     return this._insertDebugIfAbsent.run(requestId, ts || new Date().toISOString(), JSON.stringify(record)).changes > 0
   }
 
-  getDebug(requestId) {
-    const row = this._getDebug.get(requestId)
+  getDebug(requestId, { includeRaw = false } = {}) {
+    const row = (includeRaw ? this._getRawDebug : this._getDebug).get(requestId)
     if (!row) return null
     try {
       return enrichLogRow(JSON.parse(row.record_json))
     } catch {
       return null
     }
+  }
+
+  /** Preselect whole serialized JSONL sizes; never load an oversized raw row. */
+  selectRawExport(requestIds, maxBytes) {
+    const sizeQuery = this.db.prepare(`SELECT LENGTH(CAST(record_json AS BLOB)) + 1 AS bytes
+      FROM request_log_debug WHERE request_id = ? AND json_type(record_json, '$.raw_debug') = 'object'`)
+    const selected = []
+    let bytes = 0
+    let unavailable = 0
+    let oversized = 0
+    let byteLimited = 0
+    for (const id of requestIds) {
+      const row = sizeQuery.get(id)
+      if (!row) {
+        unavailable++
+        continue
+      }
+      if (row.bytes > maxBytes) {
+        oversized++
+        continue
+      }
+      if (bytes + row.bytes > maxBytes) {
+        byteLimited++
+        continue
+      }
+      selected.push(id)
+      bytes += row.bytes
+    }
+    // Synchronous preselection/load prevents cleanup races; these are the exact stored strings.
+    const lines = selected.map((id) => this._getRawDebug.get(id).record_json + '\n')
+    return { lines, bytes, unavailable, oversized, byteLimited }
   }
 
   listDebug({ limit = 20, owner_user_id = null } = {}) {
@@ -392,7 +432,7 @@ export class UsageLogsRepo {
     }
     return this.db
       .prepare(`
-      SELECT d.record_json
+      SELECT json_remove(d.record_json, '$.raw_debug') AS record_json
       FROM request_log_debug d
       JOIN usage_logs u ON u.request_id = d.request_id
       WHERE ${own.sql}
@@ -418,6 +458,7 @@ export class UsageLogsRepo {
     limit = 50,
     offset = 0,
     api_key_id = null,
+    request_id = null,
     vm_id = null,
     account_id = null,
     model = null,
@@ -437,6 +478,10 @@ export class UsageLogsRepo {
     if (own.sql) {
       where.push(own.sql)
       params.push(...own.params)
+    }
+    if (request_id) {
+      where.push('request_id = ?')
+      params.push(request_id)
     }
     if (api_key_id) {
       where.push('api_key_id = ?')

@@ -460,9 +460,36 @@ test('finish prices OpenAI-shaped usage from third-party clients', () => {
   assert.equal(sum.cache_read_tokens, 1_000_000)
 })
 
-test('cache breakdown without a split bills 5m unless cache_ttl is explicitly 1h', () => {
+test('Claude thinking suffix is a request parameter, not a model redirect', () => {
   const store = tmpStore('normal')
-  const five = store.finish(
+  for (const [requested, upstream, mismatch] of [
+    ['claude-opus-4-6(60000)', 'claude-opus-4-6', 0],
+    ['claude-opus-4-6(10000)', 'claude-opus-4-6', 0],
+    ['claude-opus-4-6(max)', 'claude-opus-4-6', 0],
+    ['claude-opus-4-6(60000)', 'claude-sonnet-4-6', 1],
+    ['claude-opus-4-6(unsupported)', 'claude-opus-4-6', 1],
+    ['unrelated(60000)', 'unrelated', 1],
+    ['claude-opus-4-6(60000)', null, null],
+  ]) {
+    const ctx = store.start(
+      { method: 'POST', headers: {}, socket: {} },
+      { protocol: 'openai.chat', pathName: '/v1/chat/completions' },
+    )
+    const sum = store.finish(ctx, {
+      status: 200,
+      model: requested,
+      requested_model: requested,
+      upstream_model: upstream,
+    })
+    assert.equal(sum.requested_model, requested)
+    assert.equal(sum.upstream_model, upstream)
+    assert.equal(sum.model_mismatch, mismatch, requested)
+  }
+})
+
+test('cache split stays unknown through log storage when upstream omits it', () => {
+  const store = tmpStore('normal')
+  const sum = store.finish(
     store.start(
       { method: 'POST', headers: {}, socket: {} },
       { protocol: 'anthropic.messages', pathName: '/v1/messages' },
@@ -474,23 +501,15 @@ test('cache breakdown without a split bills 5m unless cache_ttl is explicitly 1h
       usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 9 },
     },
   )
-  assert.equal(five.cache_creation_5m_tokens, 9)
-  assert.equal(five.cache_creation_1h_tokens, 0)
-  assert.equal(five.model_mismatch, 0)
-  const hour = store.finish(
-    store.start(
-      { method: 'POST', headers: {}, socket: {} },
-      { protocol: 'anthropic.messages', pathName: '/v1/messages' },
-    ),
-    {
-      status: 200,
-      model: 'claude-sonnet-5',
-      upstream_model: 'claude-sonnet-5',
-      usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 9, cache_ttl: '1h' },
-    },
-  )
-  assert.equal(hour.cache_creation_5m_tokens, 0)
-  assert.equal(hour.cache_creation_1h_tokens, 9)
+  assert.equal(sum.cache_creation_5m_tokens, null)
+  assert.equal(sum.cache_creation_1h_tokens, null)
+  assert.equal(sum.cache_creation_unclassified_tokens, 9)
+  assert.equal(sum.cache_creation_estimated, true)
+  const row = store.repo.getByRequestId(sum.request_id)
+  assert.equal(row.cache_creation_5m_tokens, null)
+  assert.equal(row.cache_creation_1h_tokens, null)
+  assert.equal(row.cache_creation_estimated, true)
+  assert.equal(sum.model_mismatch, 0)
 })
 
 test('finish persists web_search_requests from server_tool_use', () => {

@@ -46,6 +46,7 @@ import {
   USAGE_LOGS_QUERY_KEY,
   logStatsQueryOptions,
 } from './queries'
+import { readRawExportResponse } from './raw-debug-panel'
 import {
   activeFilterCount,
   filtersToApi,
@@ -183,20 +184,41 @@ export function LogsPage() {
   async function handleExport(opts: ExportOptions) {
     try {
       const qs = exportQuery(opts, filters, muted)
+      if (opts.includeRaw) {
+        qs.set('format', 'jsonl')
+        if (role === 'admin') qs.set('include_raw', '1')
+      }
       const res = await panelFetch(`/api/panel/request-logs/export?${qs}`)
       if (!res.ok) throw new ApiError('导出失败', res.status)
       // 只有受信 Origin 能读到这三个头；其余跨域场景为 null，下方按缺失处理。
       const count = Number(res.headers.get('x-kin-export-count') ?? NaN)
       const total = Number(res.headers.get('x-kin-export-total') ?? NaN)
       const truncated = res.headers.get('x-kin-export-truncated') === '1'
-      const blob = await res.blob()
+      const rawDownload = opts.includeRaw
+        ? await readRawExportResponse(res)
+        : null
+      if (opts.includeRaw && !rawDownload) {
+        toast.error('原始记录不可用、已过期或超过完整记录导出上限')
+        return
+      }
+      const blob = rawDownload?.blob ?? (await res.blob())
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `vm2api-logs-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')}.${opts.format}`
+      a.download = `vm2api-logs-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')}.${opts.includeRaw ? 'jsonl' : opts.format}`
       a.click()
       URL.revokeObjectURL(url)
-      if (truncated && Number.isFinite(count) && Number.isFinite(total)) {
+      if (opts.includeRaw) {
+        toast.success(
+          rawDownload?.metadataKnown
+            ? `已下载 ${count} 条完整存储记录；不可用 ${res.headers.get('x-kin-export-unavailable') || 0}，过大 ${res.headers.get('x-kin-export-oversized') || 0}，字节/条数限制省略 ${Number(res.headers.get('x-kin-export-byte-limited') || 0) + Number(res.headers.get('x-kin-export-row-limited') || 0)}`
+            : '已下载；代理未提供导出统计头，请检查采集状态'
+        )
+      } else if (
+        truncated &&
+        Number.isFinite(count) &&
+        Number.isFinite(total)
+      ) {
         toast.success(
           `已下载 ${count} 条，共匹配 ${total} 条，超过 ${opts.limit} 已截断`
         )
@@ -358,8 +380,13 @@ export function LogsPage() {
           />
         </div>
       </div>
-      <LogDetailDialog state={detail} onClose={() => setDetail(null)} />
+      <LogDetailDialog
+        state={detail}
+        onClose={() => setDetail(null)}
+        canViewRaw={role === 'admin'}
+      />
       <ExportDialog
+        isAdmin={role === 'admin'}
         open={exportOpen}
         onOpenChange={setExportOpen}
         currentSummary={currentSummary}
