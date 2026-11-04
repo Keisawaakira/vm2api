@@ -28,6 +28,7 @@ function setup(t) {
   pool.stopScheduler()
   t.after(() => {
     pool.stopScheduler()
+    pool.db.close()
     fs.rmSync(root, { recursive: true, force: true })
   })
   const response = {}

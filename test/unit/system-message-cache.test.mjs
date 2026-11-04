@@ -24,7 +24,7 @@ function convert(protocol, messages, extra = {}) {
   const source = { model, max_tokens: 128, ...extra }
   source[protocol === 'openai.responses' ? 'input' : 'messages'] = messages
   const before = structuredClone(source)
-  const { claude } = toClaudeMessages(protocol, source)
+  const { claude } = toClaudeMessages(protocol, source, { chatPreserve: false })
   assert.deepEqual(source, before)
   validateCacheBreakpoints(claude)
   return claude

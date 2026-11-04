@@ -74,11 +74,11 @@ function withRoutingFile(compatibility, fn) {
 
 test('defaults are on, and messages mode aliases normalize', () => {
   assert.deepEqual(normalizeCacheBreakpoints(undefined), { ...DEFAULT_CACHE_BREAKPOINTS })
-  assert.equal(DEFAULT_CACHE_BREAKPOINTS.messages, 'rewrite')
+  assert.equal(DEFAULT_CACHE_BREAKPOINTS.messages, 'fill')
   assert.equal(normalizeMessagesBreakpointMode('auto'), 'rewrite')
   assert.equal(normalizeMessagesBreakpointMode('disabled'), 'off')
   assert.equal(normalizeMessagesBreakpointMode('restamp'), 'rewrite')
-  assert.equal(normalizeMessagesBreakpointMode('nonsense'), 'rewrite')
+  assert.equal(normalizeMessagesBreakpointMode('nonsense'), 'fill')
   assert.equal(normalizeMessagesBreakpointMode('fill'), 'fill')
   assert.equal(normalizeCacheBreakpoints({ enabled: false }).enabled, false)
 })
@@ -98,7 +98,7 @@ test('the model minimum table keeps the opus 4 point releases apart', () => {
   assert.equal(minCacheableTokens('claude-something-new'), DEFAULT_MIN_CACHEABLE_TOKENS)
 })
 
-test('a system below the model minimum is left unmarked', () => {
+test('CLIProxy places the system marker without guessing the model cache threshold', () => {
   const out = applyCacheBreakpoints(
     {
       model: 'claude-opus-4-6',
@@ -112,7 +112,7 @@ test('a system below the model minimum is left unmarked', () => {
   )
   assert.deepEqual(
     breakpoints(out).map((h) => h.where),
-    ['messages[0][0]'],
+    ['system[1]', 'messages[0][0]'],
   )
 })
 
@@ -212,17 +212,19 @@ test('a deferred tool loses the marker Anthropic rejects', () => {
   assert.equal(out.tools[1].cache_control, undefined)
 })
 
-test('fill leaves a body that already carries caller message breakpoints alone', () => {
+test('fill preserves historical markers and fills the last eligible message', () => {
   const body = {
     messages: [
       { role: 'user', content: [{ type: 'text', text: 'a', cache_control: { type: 'ephemeral', ttl: '5m' } }] },
       { role: 'assistant', content: [{ type: 'text', text: 'b' }] },
     ],
   }
-  assert.equal(applyMessageBreakpoints(body, '5m', 'fill'), body)
+  const out = applyMessageBreakpoints(body, '5m', 'fill')
+  assert.deepEqual(out.messages[0], body.messages[0])
+  assert.equal(out.messages[1].content[0].cache_control.ttl, '5m')
 })
 
-test('fill marks the last message and the penultimate user when length >= 4', () => {
+test('fill marks only the last eligible message', () => {
   const out = applyMessageBreakpoints(
     {
       messages: [
@@ -237,7 +239,7 @@ test('fill marks the last message and the penultimate user when length >= 4', ()
   )
   assert.deepEqual(
     breakpoints(out).map((h) => h.where),
-    ['messages[0][0]', 'messages[3][0]'],
+    ['messages[3][0]'],
   )
 })
 
@@ -250,7 +252,7 @@ test('a short conversation only gets the tail marker', () => {
   assert.equal(breakpoints(out).length, 1)
 })
 
-test('rewrite drops caller markers before re-marking the stable positions', () => {
+test('legacy rewrite now preserves caller anchors instead of deleting them', () => {
   const out = applyMessageBreakpoints(
     {
       messages: [
@@ -265,7 +267,7 @@ test('rewrite drops caller markers before re-marking the stable positions', () =
   )
   assert.deepEqual(
     breakpoints(out).map((h) => h.where),
-    ['messages[0][0]', 'messages[3][0]'],
+    ['messages[2][0]', 'messages[3][0]'],
   )
 })
 
@@ -298,7 +300,7 @@ test('a string content block is promoted so the marker has somewhere to live', (
   ])
 })
 
-test('rewrite stamps the last non-thinking content block', () => {
+test('explicit tail mode stamps the last non-thinking content block', () => {
   const out = applyMessageBreakpoints(
     {
       messages: [
@@ -313,7 +315,7 @@ test('rewrite stamps the last non-thinking content block', () => {
       ],
     },
     '1h',
-    'rewrite',
+    'tail',
   )
   assert.deepEqual(out.messages[0].content[0].cache_control, { type: 'ephemeral', ttl: '1h' })
   assert.equal(out.messages[0].content[1].cache_control, undefined)

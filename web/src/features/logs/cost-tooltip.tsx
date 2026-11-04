@@ -20,7 +20,7 @@ function CostRow({
 }: {
   label: ReactNode
   amount: number
-  tokens: number
+  tokens: number | null
 }) {
   const unit = unitPricePerMillion(amount, tokens)
   return (
@@ -121,6 +121,25 @@ export function CostTooltipContent({ row }: { row: UsageLogRow }) {
               amount={costSplit.oneH}
               tokens={tokenSplit.oneH}
             />
+          ) : null}
+          {(costSplit.unallocated || 0) > 0 ? (
+            <CostRow
+              label='缓存写入合计（未分摊）'
+              amount={costSplit.unallocated!}
+              tokens={row.cacheCreationInputTokens}
+            />
+          ) : null}
+          {(tokenSplit.unknown || 0) > 0 ? (
+            <p className={LABEL}>
+              缓存写入 TTL 未细分：{tokenSplit.unknown!.toLocaleString()} tokens
+            </p>
+          ) : null}
+          {tokenSplit.fiveM > 0 &&
+          tokenSplit.oneH > 0 &&
+          !costSplit.unallocated ? (
+            <p className={LABEL}>
+              缓存费用按观测 token 比例分摊估算，非独立结算值。
+            </p>
           ) : null}
           {(breakdown.cacheRead ?? 0) > 0 ? (
             <CostRow

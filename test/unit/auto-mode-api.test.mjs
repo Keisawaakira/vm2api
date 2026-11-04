@@ -12,11 +12,30 @@ import {
   toClaudeMessages,
 } from '../../src/lib/protocol/convert.mjs'
 
+async function listenApiFixture(server, temp, t) {
+  const socket = process.platform === 'win32' ? `\\\\.\\pipe\\${path.basename(temp)}` : path.join(temp, 'run', 'api-kernel.sock')
+  const previous = process.env.KIN_API_KERNEL_SOCK
+  process.env.KIN_API_KERNEL_SOCK = socket
+  t.after(() => {
+    if (previous === undefined) delete process.env.KIN_API_KERNEL_SOCK
+    else process.env.KIN_API_KERNEL_SOCK = previous
+  })
+  await new Promise(resolve => server.listen(socket, resolve))
+}
+
 test('API classifier backend preserves contract, rejects model substitution and exposes real failures', async (t) => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'auto-mode-api-'))
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }))
   fs.mkdirSync(path.join(temp, 'run'))
   fs.writeFileSync(path.join(temp, 'run', 'api-kernel.token'), 'fixture-token')
+  const socketPath =
+    process.platform === 'win32' ? `\\\\.\\pipe\\${path.basename(temp)}` : path.join(temp, 'run', 'api-kernel.sock')
+  const previousSocket = process.env.KIN_API_KERNEL_SOCK
+  process.env.KIN_API_KERNEL_SOCK = socketPath
+  t.after(() => {
+    if (previousSocket == null) delete process.env.KIN_API_KERNEL_SOCK
+    else process.env.KIN_API_KERNEL_SOCK = previousSocket
+  })
   let scenario = 'ok'
   let calls = 0
   let wire
@@ -75,7 +94,7 @@ test('API classifier backend preserves contract, rejects model substitution and 
     for (const event of events) res.write(`data: ${JSON.stringify(event)}\n\n`)
     res.end()
   })
-  await new Promise((resolve) => server.listen(path.join(temp, 'run', 'api-kernel.sock'), resolve))
+  await new Promise((resolve) => server.listen(socketPath, resolve))
   t.after(() => new Promise((resolve) => server.close(resolve)))
   let selectedModel = 'claude-sonnet-4-6'
   const input = classifierFixture()
@@ -100,7 +119,7 @@ test('API classifier backend preserves contract, rejects model substitution and 
       timeoutMs: 3000,
     })
   const ok = await run()
-  assert.equal(ok.ok, true)
+  assert.equal(ok.ok, true, JSON.stringify(ok))
   assert.equal(ok.body.stop_reason, 'max_tokens')
   assert.equal(wire.max_tokens, 64)
   assert.deepEqual(wire.thinking, { type: 'disabled' })
@@ -169,7 +188,7 @@ test('native Anthropic API backend forwards safeguards and caller protocol heade
     for (const event of events) res.write(`data: ${JSON.stringify(event)}\n\n`)
     res.end()
   })
-  await new Promise((resolve) => server.listen(path.join(temp, 'run', 'api-kernel.sock'), resolve))
+  await listenApiFixture(server, temp, t)
   t.after(() => new Promise((resolve) => server.close(resolve)))
 
   const body = {
@@ -258,7 +277,7 @@ test('native Anthropic API backend keeps endpoint headers and applies the 1M pol
     for (const event of events) res.write(`data: ${JSON.stringify(event)}\n\n`)
     res.end()
   })
-  await new Promise((resolve) => server.listen(path.join(temp, 'run', 'api-kernel.sock'), resolve))
+  await listenApiFixture(server, temp, t)
   t.after(() => new Promise((resolve) => server.close(resolve)))
 
   const run = (model, endpointHeaders) => {

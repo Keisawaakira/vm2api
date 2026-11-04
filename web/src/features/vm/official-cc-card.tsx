@@ -28,17 +28,28 @@ export function officialCcStepLabel(step?: string): string {
   return STEP_LABELS[String(step || '')] || step || '准备'
 }
 
-export function officialCcErrorHint(err?: string | null): string {
+export function officialCcErrorHint(
+  err?: string | null,
+  step?: string,
+  diagnosticCode?: string
+): string {
+  if (diagnosticCode === 'usage_output_parsed')
+    return '保留的历史额度输出已重新解析；无需为这份诊断重跑 hello，下载即可查看实际文本。'
   const s = String(err || '')
   if (!s) return ''
   if (/invalid_grant|refresh token not found|could not be refreshed/i.test(s))
     return '刷新票已失效。请重新换票；若票是新的，可再点一次「执行官方初装」。'
   if (/not logged in|please run \/login/i.test(s))
     return '官方 CLI 未登录。确认换票已写入后，再执行一次官方初装。'
+  if (
+    step === 'usage' ||
+    /\/usage|usage probe|official-cc-usage|usage=fail/i.test(s)
+  )
+    return /scope|permission|权限/i.test(s)
+      ? '额度读取可能缺少授权权限。先下载诊断核对实际 scope；hello 成功不等于额度接口权限完整。'
+      : '这是额度检查失败，不等于 hello 失败。先刷新并下载已有初装诊断，无需反复运行 hello。'
   if (/timed out|timeout/i.test(s))
-    return '官方对话超时。可在本页再次执行官方初装。'
-  if (/\/usage|usage probe|official-cc-usage/i.test(s))
-    return '槽内 /usage 重试 2 次仍失败。检查槽位 SOCKS5 后，再执行一次官方初装。'
+    return '官方对话超时。先检查本次退出信息，再决定是否重试。'
   if (/no live oauth|no_credential|credential/i.test(s))
     return '此槽没有可用 OAuth。先换票，再执行官方初装。'
   if (/already_running/i.test(s)) return '初装已在运行，稍等或刷新进度。'
@@ -46,6 +57,61 @@ export function officialCcErrorHint(err?: string | null): string {
     return '设置里关闭了换票后自动初装。可在本页手动执行。'
   if (/bridge/i.test(s)) return '槽位 SOCKS5 桥没起来。检查代理后再次执行。'
   return '可在本页再次执行官方初装。'
+}
+
+export function officialCcDiagnostic(vmId: string, cc: OfficialCcStatus) {
+  const d = cc.usage_diagnostics
+  return {
+    vm_id: vmId,
+    source: 'official_cc_bootstrap_diagnostic',
+    claude_version:
+      typeof cc.claude_version === 'string' ? cc.claude_version : null,
+    started_at: typeof cc.started_at === 'string' ? cc.started_at : null,
+    finished_at: typeof cc.finished_at === 'string' ? cc.finished_at : null,
+    status: cc.status,
+    step: cc.step,
+    hello_ok: cc.hello_ok,
+    usage_ok: cc.usage_ok,
+    usage_attempts: cc.usage_attempts,
+    usage_http_status: cc.usage_http_status,
+    exit_code: cc.exit_code,
+    error: d?.message || cc.error,
+    usage_diagnostics: d
+      ? {
+          source: d.source,
+          code: d.code,
+          message: d.message,
+          cli_exit_code: d.cli_exit_code,
+          http_status: d.http_status,
+          stdout_available: d.stdout_available,
+          stderr_available: d.stderr_available,
+          stdout_bytes: d.stdout_bytes,
+          stderr_bytes: d.stderr_bytes,
+          truncated: d.truncated,
+          file_truncated: d.file_truncated,
+          limits_present: d.limits_present,
+          stdout_text: d.stdout_text,
+          stdout_text_chars: d.stdout_text_chars,
+          stdout_text_truncated: d.stdout_text_truncated,
+          stdout_excerpt_truncated: d.stdout_excerpt_truncated,
+          stdout_excerpt: d.stdout_excerpt,
+          stderr_excerpt: d.stderr_excerpt,
+        }
+      : null,
+  }
+}
+
+function downloadDiagnostic(vmId: string, cc: OfficialCcStatus) {
+  const url = URL.createObjectURL(
+    new Blob([JSON.stringify(officialCcDiagnostic(vmId, cc), null, 2)], {
+      type: 'application/json',
+    })
+  )
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `vm2api-${vmId}-official-init-diagnostic.json`
+  link.click()
+  URL.revokeObjectURL(url)
 }
 
 const TRACK: [string, string][] = [
@@ -126,7 +192,7 @@ export function OfficialCcFacts({ cc }: { cc: OfficialCcStatus | null }) {
     cc.hello_ok && (cc.usage_ok || cc.stats_ok)
       ? '额度已探测'
       : cc.hello_ok
-        ? 'hello'
+        ? 'hello 已完成，额度检查未通过'
         : ''
   const resident = cc.resident_ok ? '常驻中' : cc.resident ? '常驻未拉起' : ''
   const tel =
@@ -183,8 +249,13 @@ export function OfficialCcCard({
           (cc?.telemetry_official ? ' · 遥测已对齐' : '')
       )
     } else if (st === 'error') {
-      const hint = officialCcErrorHint(cc?.error)
-      toast.error((cc?.error || '官方初装失败') + (hint ? `。${hint}` : ''))
+      const message = cc?.usage_diagnostics?.message || cc?.error
+      const hint = officialCcErrorHint(
+        message,
+        cc?.step,
+        cc?.usage_diagnostics?.code
+      )
+      toast.error((message || '官方初装失败') + (hint ? `。${hint}` : ''))
     }
     qc.invalidateQueries({ queryKey: vmQueryOptions(vmId).queryKey })
     qc.invalidateQueries({ queryKey: dashboardQueryOptions().queryKey })
@@ -219,7 +290,11 @@ export function OfficialCcCard({
   })
 
   const tone = toneOf(cc?.status)
-  const hint = cc?.status === 'error' ? officialCcErrorHint(cc.error) : ''
+  const errorMessage = cc?.usage_diagnostics?.message || cc?.error
+  const hint =
+    cc?.status === 'error'
+      ? officialCcErrorHint(errorMessage, cc.step, cc.usage_diagnostics?.code)
+      : ''
   const runLabel = running
     ? '初装进行中…'
     : cc?.status === 'error'
@@ -276,17 +351,27 @@ export function OfficialCcCard({
           ) : null}
         </div>
 
-        {cc?.error ? (
+        {errorMessage ? (
           <div className='space-y-1 rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs'>
             <div>
               <span className='font-medium'>错误</span> ·{' '}
-              <span className='font-mono break-all'>{cc.error}</span>
+              <span className='font-mono break-all'>{errorMessage}</span>
             </div>
             {hint ? <div className='text-muted-foreground'>{hint}</div> : null}
           </div>
         ) : null}
 
         <div className='flex flex-wrap items-center gap-2'>
+          {cc ? (
+            <Button
+              size='sm'
+              variant='outline'
+              disabled={running}
+              onClick={() => downloadDiagnostic(vmId, cc)}
+            >
+              下载初装诊断
+            </Button>
+          ) : null}
           <Button
             size='sm'
             variant={cc?.status === 'error' ? 'default' : 'outline'}

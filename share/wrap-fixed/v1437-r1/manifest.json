@@ -1,0 +1,220 @@
+{
+  "version": 1,
+  "id": "wrap-fixed-v1437-r1",
+  "status": "owner_approved",
+  "production_approved": true,
+  "dataplane": "wrap-fixed",
+  "kernel_policy": "shared_upstream",
+  "approval_scope": "cli_only",
+  "approval": {
+    "date": "2026-11-03",
+    "basis": "owner-authorized locally verified fixed maintenance",
+    "scope": "CLI-only native runtime and caller preservation; no Linux/cloud acceptance"
+  },
+  "lineage": {
+    "source_file": "share/wrap-cli/cli-node",
+    "source_sha256": "8484c4c58f4b7782a190f7cab7c8aa5d1f706ae26b2d2a5cafe81af070f0611b",
+    "upstream_cli_sha256": "8484c4c58f4b7782a190f7cab7c8aa5d1f706ae26b2d2a5cafe81af070f0611b",
+    "original_cc_sha256": "be5eec49a78345dd935e302e88c9d7ad0afbb09a195356d81be1bdea766f3960",
+    "previous_release": "wrap-fixed-v1201-r1",
+    "classifier_reference_commit": "fe4b23a",
+    "refresh_reference_commit": "cb585bb6",
+    "kernel_wire_reference_commit": "18188710",
+    "request_wire_reference_commit": "af30a588",
+    "assembly_reference_commit": "5278867caab0eda00988fbe15f7df3dce239fa61",
+    "caller_cache_reference_commit": "0c8078ec38fa49642bb46420f6270b7654178543",
+    "runtime_reference_commit": "034dad443db93f35df060a03993f602fe205914e"
+  },
+  "cache_contract": "caller_markers_owned_v2",
+  "supported_layouts": [
+    "zero",
+    "identity"
+  ],
+  "artifacts": {
+    "cli-node": {
+      "file": "cli-node",
+      "bytes": 27934268,
+      "sha256": "7628539243b2a4128f45c7a52afb688be9dee9ae1da68643ac9692c366370710",
+      "unpacked_bytes": 118306944,
+      "unpacked_sha256": "94ed9d00296e63478e4f0f2798808d546e736b4bed6164ed0e292bd302c1903a",
+      "source_packed_sha256": "8484c4c58f4b7782a190f7cab7c8aa5d1f706ae26b2d2a5cafe81af070f0611b",
+      "source_unpacked_sha256": "f13d8cdfa45dfc6eb7c10334d5c7f7b0ab47e7c1b7886fc3afc274942105b98b",
+      "patches": [
+        {
+          "id": "caller-aware-final-fetch-headers",
+          "offset": 100757884,
+          "bytes": 2489,
+          "replacement_bytes": 2129,
+          "before_sha256": "145e7fce8a5b153db34fff990b9d23619592469d2a8b23e9c06685e895dfcd74",
+          "after_sha256": "43502c0a4497ff0bbd737ae305f9dbef7b149273e2754aec23e7b4a951b7fec3"
+        },
+        {
+          "id": "caller-provenance-system-wire",
+          "offset": 115705454,
+          "bytes": 78023,
+          "replacement_bytes": 65075,
+          "before_sha256": "c707a6f85977dd19500267e6a3bc3009f613ead637396f758491cbc0cbcfaefd",
+          "after_sha256": "9d756883d571a8b567330c9e3c8bf61507c8464af517310e1d1d8ed7aab9e213"
+        },
+        {
+          "id": "native-busy-cancel-phase",
+          "offset": 115818967,
+          "bytes": 1697,
+          "replacement_bytes": 1387,
+          "before_sha256": "edf78c951b4e120aa9650778d15ab51f77b47a4ccce1746d2e46f9a2e2616944",
+          "after_sha256": "caa3798fd7160a4c0518973b21c2c0446f4f2cb945e40280fa1628a5b5af8dd7"
+        }
+      ],
+      "validations": {
+        "elf_graph": true,
+        "no_bytecode": true,
+        "unchanged_outside_js_spans": true,
+        "syntax": true,
+        "native_bindings_resolved": true,
+        "upx_integrity": true,
+        "exact_unpack_roundtrip": true
+      }
+    }
+  },
+  "tools": {
+    "bun": "1.3.14",
+    "upx": "upx 5.0.2"
+  },
+  "patches_sha256": "4aead05f1b042d2b31f188b027fdb9323355afe39e0c60c1a9a552103fbdb2ee",
+  "semantics_sha256": "e9363cfba37bb2859567eab31796cb1e124f6e59eafcc3f55ecb8d23f440a6bc",
+  "local_validation": {
+    "completed": true,
+    "native_execution": false,
+    "behavior_tests": 380,
+    "full_source_scope_audit": {
+      "native_unresolved": [],
+      "whole_unresolved": [
+        "AggregateError",
+        "ArrayBuffer",
+        "AsyncIterator",
+        "Atomics",
+        "BigInt",
+        "BigInt64Array",
+        "BigUint64Array",
+        "Blob",
+        "DOMException",
+        "DataView",
+        "DedicatedWorkerGlobalScope",
+        "Deno",
+        "EdgeRuntime",
+        "EvalError",
+        "Event",
+        "EventTarget",
+        "File",
+        "FileReader",
+        "FinalizationRegistry",
+        "Float16Array",
+        "Float32Array",
+        "Float64Array",
+        "FormData",
+        "Function",
+        "Int16Array",
+        "Int32Array",
+        "Int8Array",
+        "Iterator",
+        "MACRO",
+        "MessageChannel",
+        "MessageEvent",
+        "MessagePort",
+        "MutationObserver",
+        "Proxy",
+        "RangeError",
+        "ReadableStream",
+        "ReferenceError",
+        "Reflect",
+        "Request",
+        "Response",
+        "SharedArrayBuffer",
+        "SuppressedError",
+        "SyntaxError",
+        "TextDecoderStream",
+        "TransformStream",
+        "TypeError",
+        "URIError",
+        "Uint16Array",
+        "Uint32Array",
+        "Uint8ClampedArray",
+        "WeakRef",
+        "WebAssembly",
+        "WebSocket",
+        "WorkerGlobalScope",
+        "WritableStream",
+        "XMLHttpRequest",
+        "__REACT_DEVTOOLS_GLOBAL_HOOK__",
+        "__UNDICI_IS_NODE__",
+        "atob",
+        "btoa",
+        "clearImmediate",
+        "crypto",
+        "decodeURI",
+        "decodeURIComponent",
+        "define",
+        "document",
+        "encodeURI",
+        "encodeURIComponent",
+        "esbuildDetection",
+        "escape",
+        "eval",
+        "gate",
+        "getAntModelOverrideConfig",
+        "getAntModels",
+        "global",
+        "isFinite",
+        "isNaN",
+        "localStorage",
+        "module__cloneBuffer",
+        "module__nodeUtil",
+        "module_isBuffer",
+        "navigator",
+        "onmessage",
+        "parseFloat",
+        "parseInt",
+        "postMessage",
+        "reportError",
+        "resolveAntModel",
+        "self",
+        "setImmediate",
+        "unescape",
+        "window"
+      ],
+      "session_bindings": [
+        {
+          "name": "init_jobSession",
+          "declared": true
+        },
+        {
+          "name": "getJobSessionId",
+          "declared": true
+        },
+        {
+          "name": "runWithJobSession",
+          "declared": true
+        },
+        {
+          "name": "AsyncLocalStorage",
+          "declared": true
+        }
+      ]
+    },
+    "scope": "actual-source controls with explicit SDK/IO boundaries; not shipped Linux ELF/provider execution"
+  },
+  "limitations": [
+    "No Linux ELF/kernel/provider execution",
+    "No guarantee of quota savings, thinking or format compliance",
+    "Stock/non-kin behavior unchanged; only zero/identity native path has caller snapshot guarantee"
+  ],
+  "inherited_repairs": [],
+  "native_lifecycle_contract": "nonblocking_cancel_v1",
+  "classifier_contract": "native_request_context_v1",
+  "native_wire_contract": "unprefixed_native_v2",
+  "request_wire_contract": "model_field_gates_v1",
+  "request_assembly_contract": "caller_optional_fields_v1",
+  "runtime_wire_contract": "system_cch_runtime_v1",
+  "native_runtime_contract": "native_telemetry_runtime_v1",
+  "caller_system_contract": "caller_provenance_v1"
+}

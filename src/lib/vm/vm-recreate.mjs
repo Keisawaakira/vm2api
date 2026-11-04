@@ -14,7 +14,7 @@ import { manualScheduleLevelOf } from '../pool/credential-weight.mjs'
 import { applyUnschedulable, deriveScheduleFields, pickScheduleFields } from '../pool/schedule-state.mjs'
 import { activeHoursOf } from '../pool/active-hours.mjs'
 import { stampVmKind } from './vm-kind.mjs'
-import { materializeWrapCli } from './wrap-cli-runtime.mjs'
+import { materializeSlotDataplane } from './wrap-cli-runtime.mjs'
 import { listVms } from './vm-registry.mjs'
 import { slotHost } from './slot-host.mjs'
 import {
@@ -95,10 +95,10 @@ export function wipeSlotHome(projectRoot, id, { keepData = false } = {}) {
 
 export function seedFreshCliHome(projectRoot, vm) {
   const written = writeSlotSeedFiles(projectRoot, vm)
-  // A baked slot image carries its binaries; no .kin copy in the home.
+  // A baked node image carries its binaries; local resets retain the selected CLI.
   if (!slotHost(vm).bakedKernel) {
     try {
-      materializeWrapCli(projectRoot, vm)
+      materializeSlotDataplane(projectRoot, vm)
     } catch {}
   }
   return { homeDir: written.homeDir, seed_policy: written.seed_policy || defaultSeedPolicy(vm.seed_policy || {}) }
@@ -179,6 +179,7 @@ export function buildRecreatedVmRecord(prev, generated, { mode = 'traits' } = {}
     ...(prev.node_id ? { node_id: prev.node_id } : {}),
     ...(prev.owner_user_id ? { owner_user_id: prev.owner_user_id } : {}),
     ...(prev.origin ? { origin: prev.origin } : {}),
+    ...(prev.dataplane ? { dataplane: prev.dataplane } : {}),
   }
   // Keep mode carries the operator switch and any 不可调度 over; a fresh slot has no ticket.
   if (keep && prev?.claude?.has_access) Object.assign(next, pickScheduleFields(prev))

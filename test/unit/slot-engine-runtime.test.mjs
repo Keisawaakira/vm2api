@@ -160,12 +160,19 @@ test('rust switch recreates a slot missing the kernel mount before health commit
   let mounted = false
   let recreated = false
   let reloaded = false
+  let configWrites = 0
   let result
   try {
     result = await switchSlotInferenceEngine(vm, '/tmp/kin-project', 'rust', {
       timeoutMs: 300,
       ops: {
         ...wrapOk(),
+        writeKernelConfig: (root, record) => {
+          assert.equal(root, '/tmp/kin-project')
+          assert.equal(record.id, vm.id)
+          configWrites++
+          return {}
+        },
         kernelBinPath: () => bin,
         inspectContainer: () => ({ running: true }),
         containerHasKernelMount: () => mounted,
@@ -188,6 +195,7 @@ test('rust switch recreates a slot missing the kernel mount before health commit
 
     assert.equal(recreated, true)
     assert.equal(reloaded, false)
+    assert.equal(configWrites, 1)
     assert.equal(result.ok, true)
     assert.equal(result.active_engine, 'rust')
     assert.equal(result.runtime.rust.reachable, true)
@@ -229,6 +237,61 @@ test('rust switch fails before touching the VM when the binary is missing', asyn
   assert.equal(result.code, 'kernel_binary_missing')
   assert.equal(touched, false)
 })
+
+for (const failedHealth of [false, true]) {
+  test(`fixed engine switch waits for asynchronous reload and rollback (failed health=${failedHealth})`, async () => {
+    const calls = []
+    const routing = { compatibility: { cch_enabled: false, auto_compact_window: 250000 } }
+    const waiting = []
+    let settled = false
+    const promise = switchSlotInferenceEngine({ id: 'vm-async-fixed' }, '/fixture-only', 'rust', {
+      routing,
+      ops: {
+        kernelBinPath: () => '',
+        materializeSlotDataplane: () => ({ ok: true, wrapper: true, kernel_bin: true }),
+        writeKernelConfig: (_root, _vm, opts) => {
+          assert.equal(opts.routing, routing)
+          calls.push('config')
+        },
+        inspectContainer: () => ({ running: true }),
+        containerHasKernelMount: () => false,
+        reloadSlotWorker: (_vm, _root, opts) => {
+          assert.equal(opts.routing, routing)
+          calls.push('reload')
+          return new Promise((resolve) => waiting.push(resolve))
+        },
+        restartRustKernel: async () => {
+          calls.push('kernel')
+          return failedHealth
+            ? { ok: false, reason: 'health_timeout', health: { status: 503 } }
+            : { ok: true, health: { status: 200 } }
+        },
+      },
+    }).then((result) => {
+      settled = true
+      return result
+    })
+    assert.deepEqual(calls, ['config', 'reload'])
+    assert.equal(settled, false)
+    waiting.shift()({ ok: true, action: 'reloaded' })
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(calls[2], 'kernel')
+    if (failedHealth) {
+      assert.equal(settled, false, 'failure must await the asynchronous rollback too')
+      assert.deepEqual(calls, ['config', 'reload', 'kernel', 'reload'])
+      waiting.shift()({ ok: true, action: 'rolled_back' })
+    }
+    const result = await promise
+    assert.equal(result.ok, !failedHealth)
+    if (failedHealth) {
+      assert.equal(result.code, 'kernel_health_timeout')
+      assert.deepEqual(result.rollback, { ok: true, action: 'rolled_back' })
+    } else {
+      assert.equal(result.action, 'reloaded')
+      assert.equal(result.runtime.rust.reachable, true)
+    }
+  })
+}
 
 test('global engine switch loads raw VMs and skips explicit overrides', async (t) => {
   const projectRoot = seedVmRecords([

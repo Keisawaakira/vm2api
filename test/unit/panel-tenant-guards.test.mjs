@@ -30,9 +30,15 @@ const { readCodexAccounts, upsertCodexAccount } = await import('../../src/lib/vm
 const TENANT = { panelUser: 'tenant', panelRole: 'user', panelUserId: 'u-1' }
 const ADMIN = { apiKeyKind: 'master', panelRole: 'admin' }
 
+const projectDatabases = new Map()
 function makeProject(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-tenant-guards-'))
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  projectDatabases.set(root, [])
+  t.after(() => {
+    for (const db of projectDatabases.get(root) || []) db.close()
+    projectDatabases.delete(root)
+    fs.rmSync(root, { recursive: true, force: true })
+  })
   fs.mkdirSync(path.join(root, 'vms'), { recursive: true })
   return root
 }
@@ -145,6 +151,7 @@ function keyFixture(t) {
   claudeVm(root, 'vm-mine', 'u-1')
   claudeVm(root, 'vm-other', 'u-2')
   const store = new ApiKeyStore({ dataDir: fs.mkdtempSync(path.join(root, 'keys-')) })
+  projectDatabases.get(root).push(store.db)
   const key = store.create({ name: 'mine', user_id: 'u-1', group_id: 1 })
   return { root, store, key }
 }

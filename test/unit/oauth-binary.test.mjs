@@ -15,6 +15,7 @@ import { slotExec } from '../../src/lib/vm/slot-runtime.mjs'
 
 test('guest OAuth helper preserves provider state, PKCE and cookie authorization', {
   timeout: 30000,
+  skip: process.platform !== 'linux' ? 'Requires the shipped Linux OAuth helper; no implicit WSL' : false,
 }, async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-oauth-authorize-'))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))

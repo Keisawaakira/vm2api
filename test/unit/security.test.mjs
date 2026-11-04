@@ -45,7 +45,7 @@ test('panel session persistence stores only token hashes', async () => {
     const stored = fs.readFileSync(file, 'utf8')
     assert.doesNotMatch(stored, /kin-panel-/)
     assert.doesNotMatch(stored, new RegExp(token))
-    assert.equal(fs.statSync(file).mode & 0o777, 0o600)
+    if (process.platform !== 'win32') assert.equal(fs.statSync(file).mode & 0o777, 0o600)
     assert.deepEqual(
       fs.readdirSync(dir).filter((name) => name.includes('.tmp')),
       [],
@@ -137,7 +137,9 @@ test('verifyPanelSession skips a second disk write when TTL was just renewed', a
   }
 })
 
-test('existing loose panel session file is tightened on load', async () => {
+test('existing loose panel session file is tightened on load', {
+  skip: process.platform === 'win32' ? 'Requires POSIX permission bits; Windows chmod cannot represent 0600' : false,
+}, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-panel-security-'))
   const previous = process.env.KIN_DATA_DIR
   process.env.KIN_DATA_DIR = dir

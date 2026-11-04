@@ -257,46 +257,51 @@ function listenerPid(port) {
   return match ? Number(match[1]) : 0
 }
 
-function processExeDeleted(pid) {
-  const probe = pidNamespaceCommand(['sh', '-c', `readlink /proc/${Number(pid)}/exe 2>/dev/null`])
+function processLink(pid, name) {
+  const probe = pidNamespaceCommand(['sh', '-c', `readlink /proc/${Number(pid)}/${name} 2>/dev/null`])
   const result = sh(probe)
-  return (
-    result.ok &&
-    String(result.stdout || '')
-      .trim()
-      .endsWith(' (deleted)')
-  )
+  return result.ok ? String(result.stdout || '').trim() : ''
+}
+
+function processExe(pid) {
+  const value = processLink(pid, 'exe')
+  return { path: value.replace(/ \(deleted\)$/, ''), deleted: value.endsWith(' (deleted)') }
+}
+
+function isEgressExecutable(file) {
+  // Renamed old helpers remain drainable, but an argument containing the
+  // helper name is not process identity. Both executable and argv[0] must match.
+  return /^kin-egress(?:$|[-._])/.test(path.basename(String(file || '').replace(/ \(deleted\)$/, '')))
 }
 
 function ownsEgressProcess(pid, configPath, { allowDeleted = false } = {}) {
   if (!pidAlive(pid)) return false
-  // A replaced binary keeps the old inode in this process. Reusing it leaves
-  // the new file unrun and its listen port permanently busy.
-  if (!allowDeleted && processExeDeleted(pid)) return false
-  const args = processText(pid, 'cmdline').split('\0').filter(Boolean)
-  const configIndex = args.indexOf('-config')
-  if (configIndex < 0 || !args[configIndex + 1]) return false
-  const command = args.find((arg) => path.basename(String(arg || '')).startsWith('kin-egress'))
-  if (!command) return false
-  const argument = args[configIndex + 1]
-  return (
-    path.basename(argument) === path.basename(configPath) && argument.includes(path.basename(path.dirname(configPath)))
-  )
+  try {
+    // Observe the correct PID namespace, but never mistake script text or another config for ownership.
+    const exe = processExe(pid)
+    if ((exe.deleted && !allowDeleted) || !isEgressExecutable(exe.path)) return false
+    const args = processText(pid, 'cmdline').split('\0').filter(Boolean)
+    const configIndex = args.indexOf('-config')
+    if (!isEgressExecutable(args[0]) || configIndex <= 0 || !args[configIndex + 1]) return false
+    const argument = args[configIndex + 1]
+    const cwd = path.isAbsolute(argument) ? '' : processLink(pid, 'cwd')
+    if (!path.isAbsolute(argument) && !cwd) return false
+    const actualConfig = path.isAbsolute(argument) ? path.resolve(argument) : path.resolve(cwd, argument)
+    return path.normalize(actualConfig) === path.normalize(path.resolve(configPath))
+  } catch {
+    return false
+  }
 }
 
 function egressProcessPids() {
   const probe = pidNamespaceCommand([
     'sh',
     '-c',
-    // The loop's status is the last /proc entry's grep; end with true so a non-matching tail is not a failed scan.
     'for dir in /proc/[1-9]*; do tr "\\0" " " < "$dir/cmdline" 2>/dev/null | grep -q kin-egress && basename "$dir"; done; true',
   ])
   const result = sh(probe)
   if (!result.ok) return []
-  return result.stdout
-    .split(/\s+/)
-    .map(Number)
-    .filter((pid) => Number.isInteger(pid) && pid > 0)
+  return result.stdout.split(/\s+/).map(Number).filter((pid) => Number.isInteger(pid) && pid > 0)
 }
 
 function staleEgressPids(configPath, exceptPid = 0) {

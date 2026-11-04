@@ -1,8 +1,16 @@
 import { OFFICIAL_CLAUDE_CLI_UA } from '../identity/vm-identity.mjs'
+import { observeRaw, observedRawChunks } from '../admin/raw-debug.mjs'
+import { normalizeChatControls } from '../protocol/chat-thinking.mjs'
+import { parseResetMs } from './quota-window.mjs'
+import { StringDecoder } from 'node:string_decoder'
+import { isCompleteAssistantMessage, mapUpstreamError } from '../core/errors.mjs'
+import { consumeClaudeSSEData, finishOpenAIChatStream, finishOpenAICompletionStream } from '../protocol/convert.mjs'
+import { canWriteProtocolStream, writeProtocolStreamError, writeAnthropicStreamEvent } from '../protocol/stream-end.mjs'
+import { hidePersonaUsage, hidePersonaUsageInEvent } from '../identity/crs-persona-usage.mjs'
 import { officialMessagesBody } from '../protocol/anthropic-messages.mjs'
 import { prepareClassifierBody } from '../protocol/request-purpose.mjs'
-import { consumeClaudeSSEData } from '../protocol/convert.mjs'
-import { isCompleteAssistantMessage, mapUpstreamError } from '../core/errors.mjs'
+import { semanticStatusForStreamError } from '../protocol/stream-error-status.mjs'
+import { remapAnthropicStreamError } from '../protocol/stream-truncation.mjs'
 import { isContentPolicyErrorCode } from '../core/refusal-guard.mjs'
 import { forwardApi, readApiJson } from '../transport/api-kernel-client.mjs'
 import { messagesUrl, normalizeProtocol, resolvePreset, responsesUrl, upstreamAuthHeaders } from './api-presets.mjs'
@@ -103,12 +111,13 @@ function mergeCallerProtocolHeaders(base = {}, caller = {}, configured = {}, mod
   return out
 }
 
-async function readLines(stream, onLine) {
+async function readLines(stream, onLine, rawHop) {
   let buf = ''
   let receivedAt = null
-  for await (const chunk of stream) {
+  const decoder = new StringDecoder('utf8')
+  for await (const chunk of rawHop ? observedRawChunks(stream, rawHop) : stream) {
     receivedAt = Date.now()
-    buf += chunk.toString('utf8')
+    buf += Buffer.isBuffer(chunk) ? decoder.write(chunk) : String(chunk)
     let idx
     while ((idx = buf.indexOf('\n')) >= 0) {
       const line = buf.slice(0, idx)
@@ -116,6 +125,7 @@ async function readLines(stream, onLine) {
       await onLine(line, receivedAt)
     }
   }
+  buf += decoder.end()
   if (buf) await onLine(buf, receivedAt)
 }
 
@@ -202,7 +212,30 @@ function mappedOpenAIResponsesFailure(resultBase, event, committed, extras = {})
   }
 }
 
-export async function runApiInference({
+export async function runApiInference(options = {}) {
+  const rawSend = options.rawDebug ? { ...options.rawDebug } : null
+  const responseState = { upstream: null }
+  try {
+    const result = await runApiInferenceImpl({ ...options, rawSend, responseState })
+    observeRaw(rawSend?.hop, 'outcome', result)
+    return result
+  } catch (error) {
+    observeRaw(rawSend?.hop, 'outcome', {
+      ok: false,
+      error_code: 'api_response_processing_error',
+      terminalState: 'processing_error',
+    })
+    throw error
+  } finally {
+    const upstream = responseState.upstream
+    // Own a received response even if bookkeeping throws before its reader starts.
+    // This cleanup is transport correctness, independent of diagnostic enrollment.
+    if (upstream && !upstream.readableEnded && !upstream.destroyed) upstream.destroy?.()
+    observeRaw(rawSend?.hop, 'endRead', false, upstream?.trailers)
+  }
+}
+
+async function runApiInferenceImpl({
   req,
   res,
   cfg,
@@ -218,10 +251,12 @@ export async function runApiInference({
   personaHideTokens,
   cacheTtl,
   converters,
+  rawSend,
+  responseState,
   requestContext = null,
   passthrough = false,
 } = {}) {
-  const canonical = officialMessagesBody(convertedBody)
+  let canonical = protocol === 'openai.chat' ? structuredClone(convertedBody) : officialMessagesBody(convertedBody)
   const model = canonical.model
   const picked = scheduler.pick(model)
   if (!picked.ok) {
@@ -243,6 +278,7 @@ export async function runApiInference({
       ok: false,
       status: 400,
       terminalState: 'rejected',
+      upstreamExecutions: 0,
       body: {
         type: 'error',
         error: {
@@ -253,6 +289,9 @@ export async function runApiInference({
       },
     }
   }
+  const chatPreserve = protocol === 'openai.chat' && !isOpenAI
+  if (chatPreserve) canonical = normalizeChatControls(canonical)
+  else if (protocol === 'openai.chat') canonical = officialMessagesBody(canonical)
   const body = isOpenAI
     ? { ...claudeToOpenAIResponsesRequest({ ...canonical, model: picked.upstream_model }), stream: true }
     : { ...canonical, model: picked.upstream_model, stream: true }
@@ -283,6 +322,8 @@ export async function runApiInference({
   )
 
   const timing = createStreamTiming()
+  if (rawSend)
+    rawSend.context = { attemptNo: 1, repaired: false, accountId: picked.key.id, endpointId: picked.endpoint.id }
   let upstream
   try {
     upstream = await forwardApi({
@@ -293,6 +334,7 @@ export async function runApiInference({
       proxyUrl: picked.key.proxy_url,
       signal,
       timeoutMs,
+      rawSend,
     })
   } catch (error) {
     return {
@@ -312,10 +354,17 @@ export async function runApiInference({
     }
   }
 
+  responseState.upstream = upstream
+  observeRaw(rawSend?.hop, 'startResponse', upstream)
   const status = Number(upstream.statusCode) || 502
   if (status === 429 && !picked.endpoint.disable_cooling) {
-    const retry = Number(upstream.headers['retry-after'] || 30)
-    const until = new Date(Date.now() + Math.max(1, retry) * 1000).toISOString()
+    const now = Date.now()
+    const rawRetry = upstream.headers['retry-after']
+    const seconds = Number(rawRetry ?? 30)
+    const reset = Number.isFinite(seconds)
+      ? now + Math.max(1, seconds) * 1000
+      : Math.max(now + 1000, parseResetMs(rawRetry) || now + 30000)
+    const until = new Date(Number.isFinite(new Date(reset).getTime()) ? reset : now + 30000).toISOString()
     try {
       store.setKeyCooldown(picked.key.id, until)
     } catch {}
@@ -334,7 +383,7 @@ export async function runApiInference({
   }
 
   if (status >= 400) {
-    const payload = await readApiJson(upstream).catch(() => ({}))
+    const payload = await readApiJson(upstream, undefined, rawSend?.hop).catch(() => ({}))
     const message = payload?.error?.message || payload?.message || `upstream ${status}`
     const upstreamCode = String(payload?.error?.code || payload?.code || '').trim()
     const contentCode = isContentPolicyErrorCode(upstreamCode) ? upstreamCode.toLowerCase() : ''
@@ -367,177 +416,151 @@ export async function runApiInference({
       converters,
       body,
       timing,
+      rawHop: rawSend?.hop,
     })
   }
 
-  const classifierSseState = { dataBuf: '' }
+  const assembler = converters.createClaudeMessageAssembler({ chat: chatPreserve })
+  const eventState = { dataBuf: '' }
   let classifierError = null
   let classifierStopped = false
-  let streamedUsage = null
-  const readUpstreamLines = async (onLine) => {
-    try {
-      await readLines(upstream, async (line, receivedAt) => {
-        const event = consumeClaudeSSEData(line, classifierSseState)
+  let terminalError = null
+  const options = { includeUsage: inbound.stream_options?.include_usage === true }
+  let state
+  if (clientStream && protocol === 'openai.chat')
+    state = converters.createOpenAIChatStreamState(inbound.model || body.model, picked.endpoint.id, options)
+  else if (clientStream && protocol === 'openai.completions')
+    state = converters.createOpenAICompletionStreamState(inbound.model || body.model, picked.endpoint.id, options)
+  else if (clientStream && protocol === 'openai.responses')
+    state = converters.createResponsesStreamState(inbound.model || body.model, picked.endpoint.id)
+
+  let committed = false
+  const beginWrite = () => {
+    committed = true
+    if (!res.headersSent) converters.writeSSEHeaders(res)
+  }
+  const writeChunks = (chunks) => {
+    for (const chunk of chunks) {
+      if (signal?.aborted || !canWriteProtocolStream(res)) break
+      beginWrite()
+      if (chunk.error) writeProtocolStreamError(res, protocol, chunk)
+      else res.write(`data: ${JSON.stringify(chunk)}\n\n`)
+    }
+  }
+  let readError = null
+  try {
+    await readLines(
+      upstream,
+      async (line, receivedAt) => {
+        // Accounting and performance observe provider events, not the masked client copy.
+        converters.applyClaudeSSELineToMessage(line, assembler)
+        const event = consumeClaudeSSEData(line, eventState)
+        if (!event) return
         timing.observe(event, receivedAt)
-        streamedUsage = mergeUsage(streamedUsage, event?.message?.usage || event?.usage)
+        if (event.type === 'error') terminalError ||= event
         if (requestContext) {
-          // The same decoded event drives classifier validation and performance timing.
-          if (event?.type === 'error')
+          if (event.type === 'error')
             classifierError = {
               ...event,
               error: { ...event.error, ...(event.error?.code ? { upstream_code: event.error.code } : {}) },
             }
-          if (event?.type === 'message_stop') classifierStopped = true
+          if (event.type === 'message_stop') classifierStopped = true
         }
-        await onLine(line)
-      })
-    } catch (error) {
-      if (!requestContext) throw error
-      classifierError = {
-        type: 'error',
-        error: {
-          type: 'api_error',
-          code: 'upstream_stream_interrupted',
-          status: 502,
-          message: String(error.message || 'Classifier stream interrupted').slice(0, 300),
-        },
-      }
+        if (!clientStream || signal?.aborted || !canWriteProtocolStream(res)) return
+        if (event.type === 'error') {
+          beginWrite()
+          const clientError =
+            protocol === 'anthropic.messages' && !requestContext
+              ? remapAnthropicStreamError(event, { headers: resultBase.headers })
+              : classifierError || event
+          writeProtocolStreamError(res, protocol, clientError)
+          return
+        }
+        const clientEvent = chatPreserve ? event : hidePersonaUsageInEvent(event, personaHideTokens, cacheTtl)
+        if (protocol === 'anthropic.messages') {
+          beginWrite()
+          writeAnthropicStreamEvent(res, clientEvent)
+          return
+        }
+        const clientLine = `data: ${JSON.stringify(clientEvent)}`
+        if (protocol === 'openai.chat') writeChunks(converters.claudeSSELineToOpenAIChatChunks(clientLine, state))
+        else if (protocol === 'openai.completions')
+          writeChunks(converters.claudeSSELineToOpenAICompletionChunks(clientLine, state))
+        else writeChunks(converters.claudeSSELineToResponsesEvents(clientLine, state))
+      },
+      rawSend?.hop,
+    )
+  } catch (error) {
+    readError = {
+      type: 'api_error',
+      code: signal?.aborted ? 'client_aborted' : error.code || 'api_kernel_transport',
+      message: String(error.message || error).slice(0, 300),
     }
   }
-  const classifierFailure = () => {
-    if (!requestContext || (!classifierError && classifierStopped)) return null
-    const body = classifierError || {
+  if (requestContext && !signal?.aborted && (classifierError || readError || !classifierStopped)) {
+    const failureBody = classifierError || {
       type: 'error',
       error: {
         type: 'api_error',
         code: 'upstream_stream_interrupted',
         status: 502,
-        message: 'Classifier stream ended before message_stop',
+        message: readError?.message || 'Classifier stream ended before message_stop',
       },
     }
-    const declared = Number(body.error?.status)
-    const status = declared >= 400 && declared < 600 ? declared : mapUpstreamError(200, body).status
+    const declared = Number(failureBody.error?.status)
     return {
       ...resultBase,
       ok: false,
-      status,
-      body,
+      status: declared >= 400 && declared < 600 ? declared : mapUpstreamError(200, failureBody).status,
+      body: failureBody,
       headers: {
         ...resultBase.headers,
-        ...(body.error?.retry_after ? { 'retry-after': String(body.error.retry_after) } : {}),
+        ...(failureBody.error?.retry_after ? { 'retry-after': String(failureBody.error.retry_after) } : {}),
       },
+      usage: assembler.message?.usage || null,
       terminalState: 'rejected',
-    }
-  }
-
-  if (!clientStream) {
-    const assembler = converters.createClaudeMessageAssembler()
-    let committed = false
-    let sawMessageStop = false
-    let terminalError = null
-    await readUpstreamLines(async (line) => {
-      applyMaybeUsageHide(line, personaHideTokens, cacheTtl, converters)
-      converters.applyClaudeSSELineToMessage(line, assembler)
-      const raw = String(line || '')
-      if (raw.startsWith('data:')) {
-        if (!committed) committed = true
-        const piece = raw.slice(5).trim()
-        if (piece && piece !== '[DONE]') {
-          try {
-            const evt = JSON.parse(piece)
-            if (evt?.type === 'message_stop') sawMessageStop = true
-            if (evt?.type === 'error') terminalError = evt
-          } catch {}
-        }
-      }
-    })
-    const failure = classifierFailure()
-    if (failure) return { ...failure, ...timing.snapshot(), committed: false }
-    if (terminalError) {
-      const declared = Number(terminalError.error?.status)
-      const status = declared >= 400 && declared < 600 ? declared : mapUpstreamError(200, terminalError).status
-      return {
-        ...resultBase,
-        ...timing.snapshot(),
-        ok: false,
-        status,
-        body: terminalError,
-        usage: assembler.message?.usage || null,
-        terminalState: 'rejected',
-        committed,
-        sawMessageStop,
-      }
-    }
-    const assembled = assembler.message
-    if (!sawMessageStop) {
-      return {
-        ...resultBase,
-        ...timing.snapshot(),
-        ok: false,
-        body: assembled || { type: 'error', error: { message: 'empty api upstream' } },
-        usage: assembled?.usage || null,
-        terminalState: assembled || committed ? 'incomplete' : 'rejected',
-        committed,
-        sawMessageStop: false,
-      }
-    }
-    const hop = { body: assembled, stopReason: assembled?.stop_reason, sawMessageStop: true }
-    const complete = resultBase.ok && isCompleteAssistantMessage(hop)
-    return {
-      ...resultBase,
-      ...timing.snapshot(),
-      ok: complete,
-      body: assembled || { type: 'error', error: { message: 'empty api upstream' } },
-      usage: assembled?.usage || null,
-      terminalState: complete ? 'verified' : 'incomplete',
+      transportError: !!readError,
       committed,
-      sawMessageStop: true,
+      sawMessageStop: assembler.sawMessageStop,
+      ...timing.snapshot(),
     }
   }
-
-  let state
-  if (protocol === 'openai.chat')
-    state = converters.createOpenAIChatStreamState(inbound.model || body.model, picked.endpoint.id)
-  else if (protocol === 'openai.completions')
-    state = converters.createOpenAICompletionStreamState(inbound.model || body.model, picked.endpoint.id)
-  else if (protocol === 'openai.responses')
-    state = converters.createResponsesStreamState(inbound.model || body.model, picked.endpoint.id)
-
-  let committed = false
-  let sawStop = false
-  await readUpstreamLines(async (line) => {
-    if (personaHideTokens) line = converters.hidePersonaUsageInSseLine(line, personaHideTokens, cacheTtl) || line
-    if (String(line).includes('message_stop')) sawStop = true
-    if (!committed && String(line).startsWith('data:')) {
-      committed = true
-      if (protocol === 'anthropic.messages' && !res.headersSent) converters.writeSSEHeaders(res)
-    }
-    if (protocol === 'anthropic.messages') {
-      if (!res.headersSent) converters.writeSSEHeaders(res)
-      res.write(String(line).endsWith('\n') ? String(line) : `${line}\n`)
-      return
-    }
-    const writeChunks = (chunks) => {
-      if (!chunks.length) return
-      if (!res.headersSent) converters.writeSSEHeaders(res)
-      for (const chunk of chunks) res.write(`data: ${JSON.stringify(chunk)}\n\n`)
-    }
-    if (protocol === 'openai.chat') writeChunks(converters.claudeSSELineToOpenAIChatChunks(line, state))
+  const failure = terminalError?.error || assembler.error || state?.error || readError
+  const complete =
+    !failure &&
+    assembler.sawMessageStop &&
+    isCompleteAssistantMessage({ body: assembler.message, sawMessageStop: assembler.sawMessageStop })
+  const ok = resultBase.ok && complete && !signal?.aborted
+  const usage = assembler.message?.usage || null
+  if (ok && clientStream) {
+    const clientUsage = chatPreserve ? usage : hidePersonaUsage(usage, personaHideTokens, cacheTtl)
+    if (protocol === 'openai.chat')
+      writeChunks(finishOpenAIChatStream(state, clientUsage, assembler.message.stop_reason))
     else if (protocol === 'openai.completions')
-      writeChunks(converters.claudeSSELineToOpenAICompletionChunks(line, state))
-    else writeChunks(converters.claudeSSELineToResponsesEvents(line, state))
-  })
-
-  const failure = classifierFailure()
-  if (failure) return { ...failure, ...timing.snapshot(), committed }
-
+      writeChunks(finishOpenAICompletionStream(state, clientUsage, assembler.message.stop_reason))
+  }
   return {
     ...resultBase,
     ...timing.snapshot(),
-    usage: streamedUsage,
-    ok: resultBase.ok && (deliveryMode !== 'verified' || sawStop),
-    terminalState: sawStop ? 'verified' : committed ? 'incomplete' : 'rejected',
+    status: terminalError ? semanticStatusForStreamError(terminalError) : resultBase.status,
+    ok,
+    body:
+      terminalError ||
+      (ok || (!failure && !signal?.aborted)
+        ? assembler.message
+        : {
+            type: 'error',
+            error: failure || {
+              type: 'api_error',
+              code: signal?.aborted ? 'client_aborted' : 'stream_incomplete',
+              message: 'Upstream stream ended before a complete assistant message',
+            },
+          }),
+    usage,
+    terminalState: ok ? 'verified' : terminalError ? 'rejected' : readError ? 'transport_error' : 'incomplete',
+    transportError: !!readError,
     committed,
+    sawMessageStop: assembler.sawMessageStop,
   }
 }
 
@@ -552,6 +575,7 @@ async function runOpenAIResponsesUpstream({
   converters,
   body,
   timing,
+  rawHop,
 }) {
   const chunks = []
   const anthropicSse = protocol === 'anthropic.messages' ? createAnthropicSseState() : null
@@ -617,7 +641,7 @@ async function runOpenAIResponsesUpstream({
       return
     }
     writeStreamLine(raw)
-  })
+  }, rawHop)
 
   if (!clientStream) {
     if (terminalFailure)
@@ -684,5 +708,3 @@ async function runOpenAIResponsesUpstream({
     ...timing.snapshot(),
   }
 }
-
-function applyMaybeUsageHide() {}

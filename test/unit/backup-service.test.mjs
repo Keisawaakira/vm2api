@@ -13,6 +13,7 @@ import { stopVmWatch, initVmDbSync } from '../../src/lib/vm/vm-db-sync.mjs'
 import { setVmWriteHook } from '../../src/lib/vm/vm-file.mjs'
 
 let root, dataDir, configDir, svc
+const previousTarOptions = process.env.TAR_OPTIONS
 
 function seedVm(id = 'vm-b1') {
   const vmsDir = path.join(root, 'vms')
@@ -34,6 +35,8 @@ function seedVm(id = 'vm-b1') {
 }
 
 beforeEach(() => {
+  // GNU tar otherwise interprets Windows drive letters as remote host names.
+  if (process.platform === 'win32') process.env.TAR_OPTIONS = `${previousTarOptions || ''} --force-local`.trim()
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-bak-'))
   dataDir = path.join(root, 'data')
   configDir = path.join(root, 'config')
@@ -52,6 +55,8 @@ afterEach(() => {
   delete process.env.KIN_BACKUP_DISABLED
   delete process.env.KIN_BACKUP_INTERVAL_HOURS
   delete process.env.KIN_BACKUP_RETENTION
+  if (previousTarOptions === undefined) delete process.env.TAR_OPTIONS
+  else process.env.TAR_OPTIONS = previousTarOptions
 })
 
 test('tar is available in this environment', () => {

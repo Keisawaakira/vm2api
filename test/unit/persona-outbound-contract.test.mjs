@@ -697,7 +697,10 @@ for (const backend of ['cli', 'api']) {
       const user = out.messages.find((message) => message.role === 'user')
       const content =
         typeof user.content === 'string' ? user.content : user.content.map((block) => block.text || '').join('')
-      assert.ok(content.startsWith(`<system-reminder>\n${rule}\n</system-reminder>\n`))
+      if (protocol === 'openai.chat') {
+        assert.ok(out.system.some(block => block.text === rule), 'public CPA retains caller system as system')
+        assert.ok(!content.includes(rule))
+      } else assert.ok(content.startsWith(`<system-reminder>\n${rule}\n</system-reminder>\n`))
     })
   }
 }

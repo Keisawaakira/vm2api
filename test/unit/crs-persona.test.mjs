@@ -224,10 +224,7 @@ test('empty unofficial system writes billing, CLI identity, 303 harness and boun
     out.system.some((block) => String(block.text).startsWith('Write code that reads like the surrounding code')),
     false,
   )
-  assert.equal(
-    out.system.some((block) => String(block.text).includes('# Text output')),
-    false,
-  )
+  assert.equal(out.system.some((block) => String(block.text).includes('# Text output')), false)
   assert.equal(out.messages.length, 2)
   assert.equal(out.messages[1].role, 'system')
   assert.match(out.messages[1].content, /^# Environment\n/)
@@ -863,10 +860,7 @@ test('official_prompt drops the caller agent prompt and moves other caller syste
   })
   assert.equal(out.system[2].text.startsWith('\nYou are an agent working with the user'), true)
   assert.deepEqual(out.system[2].cache_control, { type: 'ephemeral', scope: 'global' })
-  assert.equal(
-    out.system.some((block) => String(block.text).includes('你是一个高速收费员。')),
-    false,
-  )
+  assert.equal(out.system.some((block) => String(block.text).includes('你是一个高速收费员。')), false)
   assert.equal(firstUserContent(out), `${callerReminder('你是一个高速收费员。')}你好呀。`)
   assert.equal(JSON.stringify(out.messages).includes(CRS_OFFICIAL_AGENT_PROMPT.slice(0, 60)), false)
   const later = applyCrsUnofficialPersona(

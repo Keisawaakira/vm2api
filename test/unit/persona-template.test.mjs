@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { OFFICIAL_CLI_VERSION } from '../../src/lib/identity/vm-identity.mjs'
 
 import {
   DEFAULT_OVERLAY_TEMPLATES,
@@ -218,6 +219,15 @@ test('agent standing preset flags default off and isolate per preset', () => {
   assert.equal(agentStandingVar({ agent_standing_presets: { official: true } }, 'zero'), '')
   assert.equal(agentStandingVar({ agent_standing_presets: { zero: false } }, 'zero'), '')
   assert.equal(agentStandingVar({ agent_standing: '', agent_standing_presets: { official: true } }, 'official'), '')
+})
+
+test('zero preset has no hidden identity/agent blocks', () => {
+  const out = renderPersonaTemplate(DEFAULT_PERSONA_TEMPLATES.zero, personaTemplateVars({
+    firstUserText: 'ping', sessionId: 's-2', preset: 'zero', withEnv: false,
+  }))
+  assert.equal(out.length, 1)
+  assert.match(out[0].text, /^x-anthropic-billing-header:/)
+  assert.equal(out[0].cache_control, undefined)
 })
 
 test('zero prompt_version uses the interactive CLI identity', () => {
@@ -559,6 +569,7 @@ test('PUT routing accepts official_full and empty follow-preset templates', () =
 })
 
 test('PUT routing accepts only 5m and 1h cache TTL values', () => {
+  assert.deepEqual(validatePersonaRoutingPatch({ compatibility: { cache_ttl: 'auto' } }), [])
   assert.deepEqual(validatePersonaRoutingPatch({ compatibility: { cache_ttl: '5m' } }), [])
   assert.deepEqual(validatePersonaRoutingPatch({ compatibility: { cache_ttl: '1h' } }), [])
   assert.match(validatePersonaRoutingPatch({ compatibility: { cache_ttl: '60m' } })[0], /5m \/ 1h/)

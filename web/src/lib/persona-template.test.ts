@@ -6,6 +6,7 @@ import {
   PERSONA_PRESETS,
   PREVIEW_CALLER_AGENT,
   PREVIEW_CALLER_SYSTEM,
+  PERSONA_PRESET_OPTIONS,
   agentStandingVar,
   applyPersonaEnvVars,
   dropLegacyAutoScope,
@@ -24,6 +25,59 @@ import {
 } from './persona-template'
 
 describe('persona template contract', () => {
+  it('keeps the five upstream routing presets in PUT order', () => {
+    expect([...PERSONA_PRESETS]).toEqual([
+      'official',
+      'official_full',
+      'zero',
+      'custom',
+      'official_303',
+    ])
+    expect(PERSONA_PRESET_OPTIONS.map(([value]) => value)).toEqual([
+      ...PERSONA_PRESETS,
+    ])
+  })
+
+  it('keeps the 303 harness layout and billing-only zero defaults', () => {
+    expect(DEFAULT_PERSONA_TEMPLATES.official.map((block) => block.id)).toEqual(
+      [
+        'billing',
+        'identity',
+        'harness',
+        'dynamic_boundary',
+        'guidance',
+        'caller_system',
+      ]
+    )
+    expect(
+      DEFAULT_PERSONA_TEMPLATES.official_full.map((block) => block.id)
+    ).toEqual([
+      'billing',
+      'identity',
+      'harness',
+      'dynamic_boundary',
+      'guidance',
+      'env_official',
+      'env_extra',
+      'caller_system',
+    ])
+    expect(DEFAULT_PERSONA_TEMPLATES.official_full[2]?.text).toBe(
+      '{{agent_standing}}{{harness_303}}'
+    )
+    expect(DEFAULT_PERSONA_TEMPLATES.official_full[2]?.cache_control).toEqual({
+      type: 'ephemeral',
+      scope: 'global',
+    })
+    expect(DEFAULT_PERSONA_TEMPLATES.zero.map((block) => block.id)).toEqual([
+      'billing',
+    ])
+    expect(DEFAULT_PERSONA_TEMPLATES.zero[0]?.cache_control).toBeUndefined()
+    expect(DEFAULT_PERSONA_TEMPLATES.zero.some((block) => block.hide)).toBe(
+      false
+    )
+    expect(DEFAULT_PERSONA_TEMPLATES.custom).toEqual([])
+  })
+
   it('forces overlay off only for zero, and empty custom seeds official', () => {
     expect(overlayDisabledByPersona('zero')).toBe(true)
     expect(overlayDisabledByPersona('official')).toBe(false)

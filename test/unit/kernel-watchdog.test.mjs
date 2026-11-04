@@ -6,6 +6,14 @@ import test from 'node:test'
 import { createKernelWatchdog, isKernelWatchdogTarget } from '../../src/lib/transport/kernel-watchdog.mjs'
 import { kernelFaults } from '../../src/lib/transport/rust-kernel-client.mjs'
 
+test('server watchdog delegates bridges without restoring the removed telemetry sidecar', () => {
+  const source = fs.readFileSync(new URL('../../src/server.mjs', import.meta.url), 'utf8')
+  const options = source.match(/kernelWatchdog = createKernelWatchdog\(\{([\s\S]*?)\n\}\)/)?.[1]
+  assert.ok(options)
+  assert.match(options, /healBridges: createSlotBridgeHealer/)
+  assert.doesNotMatch(options, /ensureTelemetry|ensureTelemetrySidecar/)
+})
+
 test('watchdog targets inherited rust; stored go is rust; skips Codex and stopped', () => {
   const rustRouting = { inference: { engine: 'rust' } }
   assert.equal(isKernelWatchdogTarget({ id: 'vm-01' }, rustRouting), true)

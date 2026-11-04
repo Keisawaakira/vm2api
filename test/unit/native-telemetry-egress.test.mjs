@@ -22,7 +22,9 @@ const geo = {
   checked_at: '2020-01-01T00:00:00.000Z',
 }
 
-test('proxy geo overwrites a failed telemetry egress stub', () => {
+test('proxy geo overwrites a failed telemetry egress stub', {
+  skip: process.platform === 'win32' ? 'Requires POSIX runtime file-owner operations' : false,
+}, () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-telemetry-egress-'))
   const file = path.join(root, 'vms', vm.id, 'cli-home', '.claude', 'telemetry', 'egress.json')
   fs.mkdirSync(path.dirname(file), { recursive: true })

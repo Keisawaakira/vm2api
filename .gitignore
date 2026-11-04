@@ -15,14 +15,19 @@ hypervisor/*.env
 **/.env.*
 !.env.example
 *.bak*
-# Build output and slot payloads stay out of git. Go helpers and web/dist build
-# from source; the rest is pinned in deploy/payload.json (npm run fetch:payload).
+# Original payloads are release-pinned; Go helpers and the console build from source.
 /bin/
 /web/dist/
 /share/crag/
 /share/wrap-cli/*
 !/share/wrap-cli/kin-kernel
 !/share/wrap-cli/SAMPLE.json
+# Fork-specific approved CLI packages stay separate from the upstream payload.
+!/share/wrap-fixed/
+!/share/wrap-fixed/**
+!/share/cc-fixed/
+!/share/cc-fixed/**
+/share/offline-candidates/
 .workflow/
 __pycache__/
 crates/
@@ -35,6 +40,10 @@ patches/
 !src/config/gateway-v2.example.json
 
 # local / editor / agent trees — never publish
+/logs/
+/.pi-subagents/
+/CLIProxyAPI/
+/pi/
 .claude/
 .cursor/
 .pi/

@@ -969,6 +969,7 @@ test('real handleProtocol: Codex spend fills the managed key USD quota and the n
   } finally {
     opened?.ws?.close()
     await live.close()
+    keys.db.close()
     fs.rmSync(root, { recursive: true, force: true })
   }
 })

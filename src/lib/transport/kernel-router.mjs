@@ -7,6 +7,7 @@ import { clientCancelledResult, isClientCancelledResult } from '../core/errors.m
 import { ensureWorkerCredential } from './go-worker-client.mjs'
 import { ensureOfficialCredentialLink, slotUidGidFromHomeDir } from '../oauth/oauth-credentials.mjs'
 import { slotHost } from '../vm/slot-host.mjs'
+import { resolveKernelDataplane } from '../vm/slot-engine.mjs'
 import {
   streamRustKernel,
   callRustKernel,
@@ -104,8 +105,10 @@ export function peekRustHealth(exec, ttlMs, now = Date.now()) {
   return hit
 }
 
-export function resolveHopEngine(vm, _routing = {}, { rustReady = null, binPath = null } = {}) {
+export function resolveHopEngine(vm, routing = {}, { rustReady = null, binPath = null } = {}) {
   const wanted = 'rust'
+  if (slotHost(vm).bakedKernel && !['wrap', 'cc'].includes(resolveKernelDataplane(vm, routing)))
+    return { engine: 'rust', wanted, reason: 'remote_dataplane_unsupported', fallback: false, blocked: true }
   // A baked slot image carries its own kernel; the host binary only matters for local mounts.
   const bin = slotHost(vm).bakedKernel ? 'image' : binPath != null ? String(binPath).trim() : kernelBinPath()
   if (rustReady === true) {
@@ -226,6 +229,16 @@ async function runHop({ mode, opts }) {
   const decision = resolveHopEngine(opts.exec?.vm, routing)
   let engine = 'rust'
   let reason = decision.reason
+  const maxExecutions =
+    Number.isSafeInteger(opts.maxExecutions) && opts.maxExecutions >= 0 ? opts.maxExecutions : Infinity
+  if (maxExecutions === 0) {
+    return {
+      ...rustUnavailableResult({ reason: 'execution_budget_exhausted' }),
+      wanted_engine: decision.wanted,
+      engine_reason: 'execution_budget_exhausted',
+      rust_execution_count: 0,
+    }
+  }
   if (!decision.blocked) {
     const ready = await prepareRust(opts.exec, {
       ensure: opts.ensureRust,
@@ -239,6 +252,7 @@ async function runHop({ mode, opts }) {
           status: 400,
           terminalState: 'rejected',
           upstreamExecutions: 0,
+          rust_execution_count: 0,
           body: {
             type: 'error',
             error: {
@@ -255,6 +269,7 @@ async function runHop({ mode, opts }) {
         ...rustUnavailableResult(ready),
         wanted_engine: 'rust',
         engine_reason: ready?.reason || 'rust_unavailable',
+        rust_execution_count: 0,
       }
     }
   } else {
@@ -262,39 +277,66 @@ async function runHop({ mode, opts }) {
       ...rustUnavailableResult({ reason: decision.reason }),
       wanted_engine: 'rust',
       engine_reason: decision.reason,
+      rust_execution_count: 0,
     }
   }
   const send = mode === 'stream' ? streamRustKernel : callRustKernel
+  let executions = 0
+  const retryFlags = {}
+  const sendCounted = () => {
+    executions += 1
+    return send(opts)
+  }
   beginWrapHop(opts.exec)
   let result
   try {
-    result = await send(opts)
+    result = await sendCounted()
     noteWrapHop(opts.exec)
-    if (opts.signal?.aborted || isClientCancelledResult(result)) {
+    const cancelled = () => opts.signal?.aborted || isClientCancelledResult(result)
+    const canReplay = () => executions < maxExecutions && result.committed !== true && !cancelled()
+    if (cancelled()) {
       result = clientCancelledResult(result)
-    } else if (result.transportError === true && result.committed !== true) {
-      result = await send(opts)
-      result = { ...result, rust_transport_retried: true }
+    } else if (result.transportError === true && canReplay()) {
+      retryFlags.rust_transport_retried = true
+      result = await sendCounted()
       noteWrapHop(opts.exec)
     }
-    if (!isClientCancelledResult(result) && isNeedsRefreshResult(result)) {
+    if (isNeedsRefreshResult(result) && canReplay()) {
       const ensure = opts.ensureCredential || ensureWorkerCredential
       const ensured = await ensure(opts.exec, { force: true })
-      if (ensured?.ok !== true) result = credentialEnsureFailure(result, ensured)
-      else {
-        // The CLI invalidates its OAuth cache from the shared credential file
-        // before creating each API client. Recycling here kills sibling hops.
-        result = await send(opts)
-        result = { ...result, credential_retried: true }
-        noteWrapHop(opts.exec)
+      // Cancellation during recovery retains the original failure/usage.
+      // The CLI reads the rotated file; recycling would kill sibling hops.
+      if (canReplay()) {
+        if (ensured?.ok !== true) result = credentialEnsureFailure(result, ensured)
+        else {
+          retryFlags.credential_retried = true
+          result = await sendCounted()
+          noteWrapHop(opts.exec)
+        }
       }
     }
+    if (cancelled()) result = clientCancelledResult(result)
     return {
       ...result,
+      ...retryFlags,
+      rust_execution_count: executions,
       engine,
       wanted_engine: decision.wanted,
       engine_reason: reason,
     }
+  } catch (error) {
+    // Even a recovery callback exception must not erase sends already consumed.
+    let failure = error
+    try {
+      failure.rust_execution_count = executions
+    } catch {
+      failure = Object.assign(new Error(String(error?.message || error)), {
+        cause: error,
+        code: error?.code,
+        rust_execution_count: executions,
+      })
+    }
+    throw failure
   } finally {
     endWrapHop(opts.exec)
     // Inference failures only invalidate health. The watchdog owns container

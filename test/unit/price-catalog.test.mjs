@@ -106,6 +106,27 @@ test('layer precedence: override provider/model > provider/* > */model > models.
   assert.equal(resolvePrice(id).source, 'override')
 })
 
+test('recognized Claude thinking suffixes resolve the canonical price without normalizing unknown names', () => {
+  const canonical = resolvePrice('claude-opus-4-6')
+  for (const model of [
+    'claude-opus-4-6(8192)',
+    'claude-opus-4-6(60000)',
+    'claude-opus-4-6(max)',
+    'anthropic/claude-opus-4-6[1m](auto)',
+    'claude-opus-4-6(8192)[1m]',
+    'claude-opus-4-6(-1)',
+  ]) {
+    const price = resolvePrice(model)
+    assert.equal(price?.id, canonical.id, model)
+    assert.deepEqual(price?.price, canonical.price, model)
+  }
+  assert.equal(resolvePrice('claude-opus-4-6(custom)'), null)
+  assert.equal(resolvePrice('unrelated(8192)'), null)
+  assert.equal(resolvePrice('gpt-5.5(8192)'), null)
+  assert.equal(setPriceOverride('anthropic/claude-opus-4-6', FULL).ok, true)
+  assert.deepEqual(resolvePrice('claude-opus-4-6(60000)').price.input, FULL.input)
+})
+
 test('a provider/* override on a dated id keeps the canonical model builtin fast mode', () => {
   assert.equal(setPriceOverride('anthropic/*', FULL).ok, true)
   const hit = resolvePrice('claude-opus-5-5-20261001')

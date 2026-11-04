@@ -356,7 +356,7 @@ test('two first sessions of one machine claim the same VM before sticky affinity
     { id: 'vm-01', policy: { sessionSlots: 2 } },
     { id: 'vm-02', policy: { sessionSlots: 2 } },
   ])
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  t.after(() => { sticky.db.close(); fs.rmSync(root, { recursive: true, force: true }) })
   const sticky = new StickyRouter({ dataDir: root, config: { sticky: { enabled: true, ttl_seconds: 600 } } })
   const pool = new PoolScheduler({
     projectRoot: root,
@@ -402,7 +402,7 @@ test('an expired or unbound machine affinity does not send the next session back
     { id: 'vm-01', policy: { sessionSlots: 2 } },
     { id: 'vm-02', policy: { sessionSlots: 2 } },
   ])
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  t.after(() => { sticky.db.close(); fs.rmSync(root, { recursive: true, force: true }) })
   const sticky = new StickyRouter({ dataDir: root, config: { sticky: { enabled: true, ttl_seconds: 600 } } })
   const pool = scheduler(root, { seat_grace_ms: 0 })
   pool.stickyRouter = sticky
@@ -731,9 +731,12 @@ function gatedQuota(root) {
 
 function gatedSetup(t, specs) {
   const root = project(specs)
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
   const quota = gatedQuota(root)
   specs.forEach((vm, index) => quota.ensure({ account_id: `account-${index + 1}`, vm_id: vm.id }))
+  t.after(() => {
+    quota.db.close()
+    fs.rmSync(root, { recursive: true, force: true })
+  })
   const pool = new PoolScheduler({
     projectRoot: root,
     runtimeRepo: new RuntimeRepo(quota.repo),

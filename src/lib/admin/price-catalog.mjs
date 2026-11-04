@@ -75,11 +75,18 @@ function stripDecorations(raw) {
       .split('/')
       .filter(Boolean)
       .pop() || ''
-  return s
+  let id = s
+    .trim()
     .replace(/\[[^\]]*\]$/g, '')
     .replace(/-fast$/i, '')
-    .trim()
     .toLowerCase()
+  // CPA-compatible Claude suffixes are thinking controls, not model identities.
+  // Unknown suffixes and non-Claude names stay exact and unpriced.
+  if (id.startsWith('claude-'))
+    id = id
+      .replace(/\(\s*(?:\d+|-1|auto|none|minimal|low|medium|high|xhigh|max)\s*\)$/i, '')
+      .replace(/\[[^\]]*\]$/g, '')
+  return id
 }
 
 export function platformOfModel(raw) {

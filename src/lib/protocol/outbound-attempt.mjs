@@ -1,3 +1,4 @@
+import { normalizeChatControls } from './chat-thinking.mjs'
 /**
  * Single outbound assembly used by /v1 applyAttempt and probe-class helpers.
  * Tests compare envelopes from this module so admin paths cannot drift.
@@ -43,12 +44,13 @@ import {
 } from '../identity/official-cc-system-2.1.241.mjs'
 import {
   applyCacheTtlToBody,
-  applyMessageBreakpoints,
+  applyCliMessageBreakpoints,
   DEFAULT_CACHE_TTL,
   enforceCacheTtlOrder,
   normalizeCacheTtl,
   listCacheMarkers,
   removeCacheControlFields,
+  cacheTtlFromRouting,
   stripIllegalCacheControlFields,
   validateCacheBreakpoints,
 } from './cache-ttl.mjs'
@@ -57,6 +59,7 @@ import { apiKeyBetaHeader, setupTokenBetaHeader } from './claude-code-betas.mjs'
 import { isApiKeyMode, isAnySetupTokenMode } from '../oauth/credential-mode.mjs'
 import { prepareClassifierBody } from './request-purpose.mjs'
 import { applyEagerToolStreaming } from './eager-tool-streaming.mjs'
+import { usesShortClaudeCache } from './cache-request.mjs'
 
 export const INFERENCE_UA = 'kin-inference/1.0'
 
@@ -315,6 +318,8 @@ export function prepareCliHopBody(
     stream = true,
     repaired = false,
     cacheTtl = DEFAULT_CACHE_TTL,
+    chatPreserve = false,
+    nodeCacheBreakpoints = true,
     requestContext = null,
     preserveSystem = false,
     preserveThinkingBlocks = false,
@@ -326,11 +331,23 @@ export function prepareCliHopBody(
   } = {},
 ) {
   if (requestContext?.purpose === 'auto_mode_classifier') return prepareClassifierBody(canonicalBody, { stream })
-  // official_303 lean: renderOfficial303Body owns system, role=system placement and markers.
+  // Public Chat owns its accepted body; lean is a separate non-Chat template path.
   const lean = outboundShape === 'lean' && !requestContext
-  if (preserveSystem) validateCacheBreakpoints(canonicalBody)
-  let body = officialMessagesBody(canonicalBody, { stream, preserveContentShape: true })
+  if (preserveSystem || chatPreserve) validateCacheBreakpoints(canonicalBody)
   const windowTokens = Number(autoCompactWindow)
+  if (chatPreserve) {
+    let body = { ...canonicalBody, stream: !!stream }
+    if (Number.isInteger(windowTokens) && windowTokens >= 100_000 && windowTokens <= 1_000_000) {
+      body.auto_compact_window = windowTokens
+    }
+    delete body.metadata
+    // Accepted caller blocks and markers are caller-owned. Only an unmarked
+    // request receives Node anchors; existing TTLs/positions are not restamped.
+    body = normalizeChatControls(body)
+    const callerMarkers = listCacheMarkers(body).length > 0
+    return nodeCacheBreakpoints && !callerMarkers ? applyCliMessageBreakpoints(body, cacheTtl) : body
+  }
+  let body = officialMessagesBody(canonicalBody, { stream, preserveContentShape: true })
   if (Number.isInteger(windowTokens) && windowTokens >= 100_000 && windowTokens <= 1_000_000) {
     body.auto_compact_window = windowTokens
   }
@@ -371,13 +388,12 @@ export function prepareCliHopBody(
   body = stripSubagentBilling(body)
   body = stripInvalidThinkingBlocks(body, { preserveThinkingBlocks })
   body = ensureOutputConfigSchema(body)
-
   if (preparedZero && !lean && !preserveSystem && !requestContext && body.cache_control != null) {
     body = materializeAutomaticCache(body)
-  } else if (Object.prototype.hasOwnProperty.call(body, 'cache_control')) {
+  } else if (!preserveSystem && Object.prototype.hasOwnProperty.call(body, 'cache_control')) {
     delete body.cache_control
   }
-  if (!requestContext) {
+  if (!requestContext && !preserveSystem) {
     if (!lean && !shaped && !preparedZero) {
       body = { ...body, system: officialSystemTemplate(body.system, cacheTtl) }
       body.messages = officialMessageMarker(body.messages, cacheTtl)
@@ -420,6 +436,7 @@ export function prepareCliHopBody(
 export function prepareOutboundAttempt({
   requestContext = null,
   canonicalBody,
+  chatPreserve = false,
   inbound = {},
   identity,
   unofficial,
@@ -474,6 +491,18 @@ export function prepareOutboundAttempt({
       extractCallerSession({ inbound, body: canonicalBody, headers: reqHeaders }),
       sessionContext,
     )
+  if (chatPreserve) {
+    const body = normalizeChatControls({ ...canonicalBody, stream: !!stream })
+    const identified = identity
+      ? applyCrsIdentityReplace(body, identity, inbound, reqHeaders, {
+          officialClient: keepCallerSession,
+          sessionId,
+          ...sessionContext,
+        })
+      : body
+    // HTTP Chat is caller-owned too: never drop accepted marker positions or TTLs.
+    return { body: identified, toolNames: {} }
+  }
   let identified = applyCrsIdentityReplace(
     officialMessagesBody(canonicalBody, { stream }),
     identity,
@@ -494,16 +523,21 @@ export function prepareOutboundAttempt({
     return { body: prepareClassifierBody(identified, { stream }), toolNames: {} }
   // Official Claude Code places its own breakpoints; adding ours would shift the
   // prefix it already caches.
+  const defaultTtl = cacheTtl ?? cacheTtlFromRouting({}, { credentialMode })
   let cleaned = prepareAnthropicRequest(identified, {
     cacheControlLimit,
     unofficial: !!unofficial && !inferenceOnly,
     cacheBreakpoints: keepCallerSession ? null : cacheBreakpoints,
-    cacheTtl: cacheTtl || undefined,
+    cacheTtl: defaultTtl,
     inbound,
     preserveThinkingBlocks,
   })
   cleaned = stripIllegalCacheControlFields(cleaned)
-  if (cacheTtl) cleaned = applyCacheTtlToBody(cleaned, cacheTtl)
+  if (!keepCallerSession && cacheBreakpoints?.enabled !== false) {
+    cleaned = applyCacheTtlToBody(cleaned, defaultTtl)
+  }
+  if (usesShortClaudeCache({ headers: reqHeaders, body: inbound }))
+    cleaned = applyCacheTtlToBody(cleaned, '5m', { short: true })
   cleaned = enforceCacheTtlOrder(cleaned)
   const scrubbed = scrubUpstreamClientBody(cleaned, {
     official: !unofficial,
@@ -533,6 +567,7 @@ export function prepareOutboundHeaders(reqHeaders, homeDir, identity, model, { c
 export function prepareOutboundEnvelope({
   requestContext = null,
   canonicalBody,
+  chatPreserve = false,
   inbound = {},
   identity,
   unofficial,
@@ -568,6 +603,7 @@ export function prepareOutboundEnvelope({
   const prepared = prepareOutboundAttempt({
     requestContext,
     canonicalBody,
+    chatPreserve,
     inbound,
     identity,
     unofficial,
@@ -621,15 +657,17 @@ export function prepareOutboundEnvelope({
     if (beta) headers['anthropic-beta'] = beta
   }
   const displayed =
-    requestContext?.purpose === 'auto_mode_classifier'
+    chatPreserve || requestContext?.purpose === 'auto_mode_classifier'
       ? prepared.body
       : applyThinkingDisplay(prepared.body, thinkingDisplayMode(routing))
   headers['anthropic-beta'] = withRequestProtocolBetas(
     String(headers['anthropic-beta'] || '').split(','),
     displayed,
   ).join(',')
-  const body = sealClaudeCodeCch(sanitizeAnthropicBodyForBetaTokens(displayed, headers?.['anthropic-beta'] || ''), {
-    enabled: routing?.compatibility?.cch_enabled !== false,
-  })
+  const body = chatPreserve
+    ? displayed
+    : sealClaudeCodeCch(sanitizeAnthropicBodyForBetaTokens(displayed, headers?.['anthropic-beta'] || ''), {
+        enabled: routing?.compatibility?.cch_enabled !== false,
+      })
   return { body, headers, toolNames: prepared.toolNames }
 }

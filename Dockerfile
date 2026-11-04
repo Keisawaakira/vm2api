@@ -1,5 +1,5 @@
-# Control plane. Only source is in git: the console and kin-api-kernel build here; the
-# slot payloads and Go helpers come from the release pinned in deploy/payload.json.
+# Build the merged console and API kernel from source; original native payloads
+# and Go helpers are release-pinned. Verified fixed CLIs remain separate Git inputs.
 
 FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS web
 RUN npm install -g pnpm@10
@@ -7,6 +7,8 @@ WORKDIR /src/web
 COPY web/package.json web/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY web/ ./
+# Frontend diagnostics and the backend share one candidate catalog.
+COPY src/lib/transport/offline-candidate-round.json /src/src/lib/transport/offline-candidate-round.json
 RUN pnpm build
 
 FROM --platform=$BUILDPLATFORM golang:1.25-bookworm AS helpers
@@ -42,6 +44,9 @@ COPY --from=helpers /out/ /opt/vm2api/image-bin/
 COPY share/wrap-cli /opt/vm2api/image-wrap-cli
 COPY --from=payload /payload/share/wrap-cli/ /opt/vm2api/image-wrap-cli/
 COPY --from=payload /payload/share/crag/ /opt/vm2api/image-crag/
+# Fixed packages contain only the repaired CLI, not a private kernel.
+COPY share/wrap-fixed /opt/vm2api/image-wrap-fixed
+COPY share/cc-fixed /opt/vm2api/image-cc-fixed
 COPY scripts/docker-entrypoint.sh /usr/local/bin/vm2api-entrypoint
 RUN chmod 755 /usr/local/bin/vm2api-entrypoint /opt/vm2api/image-bin/* \
   && rm -f /opt/vm2api/src/lib/oauth/auth.js \
